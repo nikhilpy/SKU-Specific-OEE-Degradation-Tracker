@@ -76,6 +76,146 @@ The Plant Manager clicks **"Mitigate Impact"** on the dashboard. The Execution A
 
 > *"URGENT: SKU-899 runs are causing critical thermal stress on Line 2. Please reduce feed rate by 10% for all upcoming SKU-899 batches to preserve bearing life until scheduled weekend maintenance."*
 
+## 7. System Architecture Diagram
+
+```mermaid
+C4Container
+title Container diagram for SKU-Specific OEE Degradation Tracker
+
+Person(manager, "Plant Manager", "Monitors dashboard, investigates root causes via chat, and triggers mitigations.")
+
+System_Boundary(ingestion, "Data Ingestion Layer") {
+    Container(ot_stream, "OT Data Streamer", "Python Script", "Generates and streams high-frequency synthetic sensor telemetry.")
+    Container(it_stream, "IT Data Streamer", "Python Script", "Generates and streams low-frequency ERP batch schedules.")
+}
+
+System_Boundary(snowflake, "Snowflake Storage & Compute Layer") {
+    ContainerDb(raw_ot, "Raw OT Table", "Snowflake Table", "Stores incoming high-frequency OT data.")
+    ContainerDb(raw_it, "Raw IT Table", "Snowflake Table", "Stores incoming low-frequency IT data.")
+    Container(dynamic_tables, "Snowflake Dynamic Tables", "Snowflake SQL", "Executes the time-series boundary join between OT timestamps and IT batch durations.")
+    ContainerDb(cortex_vector, "Cortex Search Vector Store", "Snowflake Vector DB", "Stores chunked OEM PDF equipment manuals for unstructured retrieval.")
+    Container(semantic_layer, "Semantic Layer & CoCo Agents", "Snowflake CoCo", "Provides unified ontology and coordinates diagnostic/investigative agent reasoning.")
+}
+
+System_Boundary(app_action, "Application & Action Layer") {
+    Container(streamlit_app, "Command Center Dashboard", "Streamlit", "Queries the semantic layer, hosts the Chat UI, and provides mitigation action buttons.")
+    Container(mcp_server, "Local Slack MCP Server", "Model Context Protocol", "Exposes Slack integration tools to the execution agent.")
+}
+
+System_Ext(slack_workspace, "Slack Workspace", "Corporate communication platform (e.g., #production-planning channel).")
+
+Rel(ot_stream, raw_ot, "Streams telemetry data into", "Python Connector")
+Rel(it_stream, raw_it, "Streams batch schedule data into", "Python Connector")
+
+Rel(raw_ot, dynamic_tables, "Feeds")
+Rel(raw_it, dynamic_tables, "Feeds")
+
+Rel(dynamic_tables, semantic_layer, "Provides joined structured data to")
+Rel(cortex_vector, semantic_layer, "Provides unstructured OEM limits to")
+
+Rel(manager, streamlit_app, "Views alerts, asks natural language questions, and clicks mitigation triggers")
+Rel(streamlit_app, semantic_layer, "Queries ontology & invokes investigative agents", "SQL / API")
+Rel(streamlit_app, mcp_server, "Routes execution agent payloads to", "MCP Protocol")
+
+Rel(mcp_server, slack_workspace, "Pushes automated work orders and mitigation alerts to", "Slack API")
+```
+## 8. Sequence Diagram for multi-agent orchestration workflow
+
+```mermaid
+sequenceDiagram
+    participant SSM as Snowflake Semantic Model
+    participant DA as Diagnostic Agent
+    participant IA as Investigative Agent
+    participant CVDB as Cortex Vector DB
+    participant EA as Execution Agent
+    participant MCP as Slack MCP Server
+
+    SSM->>DA: Predictive Failure Threshold Breach Flag
+    
+    DA->>IA: {"Equipment_ID": "Line2_Bearing", "Failure_Horizon": "72_Hours"}
+    
+    IA->>SSM: Query Active SKU_ID at Anomaly Timestamp
+    SSM-->>IA: {"SKU_ID": "SKU-899"}
+    
+    IA->>CVDB: Query OEM constraints for Equipment_ID
+    CVDB-->>IA: {"OEM_Constraints": "Max Sustained Temp 90C"}
+    
+    IA->>EA: {"Equipment_ID": "Line2_Bearing", "Failure_Horizon": "72_Hours", "SKU_ID": "SKU-899", "OEM_Constraints": "Max Sustained Temp 90C"}
+    
+    EA->>MCP: post_message(channel="#production-planning", text="Mitigation Alert: Reduce SKU-899 feed rate...")
+```
+## 9. Entity Relationship Diagram for Database Semantic Ontology
+
+```mermaid
+erDiagram
+    EQUIPMENT {
+        string Equipment_ID PK
+        string Name
+        string Type
+    }
+
+    SKU {
+        string SKU_ID PK
+        string SKU_Name
+        string Material_Type
+    }
+
+    TELEMETRY_STREAMS_OT {
+        string Reading_ID PK
+        string Equipment_ID FK
+        datetime Timestamp
+        float Temp
+        float Vibration
+    }
+
+    PRODUCTION_BATCHES_IT {
+        string Batch_ID PK
+        string SKU_ID FK
+        string Equipment_ID FK
+        datetime Start_Time
+        datetime End_Time
+    }
+
+    OEM_MANUAL_EMBEDDINGS {
+        string Embedding_ID PK
+        string Equipment_ID FK
+        string Chunk_Text
+        string Vector_Data
+    }
+
+    EQUIPMENT ||--o{ TELEMETRY_STREAMS_OT : "generates telemetry"
+    EQUIPMENT ||--o{ PRODUCTION_BATCHES_IT : "processes"
+    EQUIPMENT ||--o{ OEM_MANUAL_EMBEDDINGS : "is documented by"
+    SKU ||--o{ PRODUCTION_BATCHES_IT : "is manufactured in"
+
+    %% IT/OT Convergence Logical Join (Snowflake Dynamic Tables)
+    TELEMETRY_STREAMS_OT }o--o{ PRODUCTION_BATCHES_IT : "Time-Series Boundary Join (Timestamp BETWEEN Start_Time AND End_Time)"
+```
+## 10. Data Flow Pipeline
+
+```mermaid
+gantt
+    title IT/OT Time-Series Boundary Join
+    dateFormat  YYYY-MM-DD HH:mm
+    axisFormat  %H:%M
+
+    section IT ERP Schedule
+    SKU-700 (Batch 4054)     :done, 2026-09-22 09:00, 2026-09-22 10:00
+    SKU-899 (Batch 4055)     :active, 2026-09-22 10:00, 2026-09-22 12:00
+    SKU-900 (Batch 4056)     :2026-09-22 12:00, 2026-09-22 13:00
+
+    section OT Telemetry Stream
+    Ping 1 - Normal (78 C)   :milestone, 2026-09-22 09:15, 0m
+    Ping 2 - Normal (80 C)   :milestone, 2026-09-22 09:45, 0m
+    Ping 3 - Normal (82 C)   :milestone, 2026-09-22 10:05, 0m
+    Ping 4 - SPIKE (92 C)    :milestone, crit, 2026-09-22 10:15, 0m
+    Ping 5 - SPIKE (95 C)    :milestone, crit, 2026-09-22 10:45, 0m
+    Ping 6 - SPIKE (98 C)    :milestone, crit, 2026-09-22 11:15, 0m
+    Ping 7 - SPIKE (93 C)    :milestone, crit, 2026-09-22 11:30, 0m
+    Ping 8 - Normal (86 C)   :milestone, 2026-09-22 11:45, 0m
+    Ping 9 - Normal (81 C)   :milestone, 2026-09-22 12:15, 0m
+    Ping 10 - Normal (79 C)  :milestone, 2026-09-22 12:45, 0m
+```
 ---
 
 ## Crucial Prototype Setup Notes:
