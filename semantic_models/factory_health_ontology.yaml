@@ -47,3 +47,43 @@ tables:
         expr: VIBRATION_RMS
         data_type: NUMBER
         default_aggregation: avg
+
+      - name: cumulative_stress_score
+        description: "A rolling metric measuring the accumulated thermal and mechanical fatigue over a 24-hour window, heavily weighted by high-stress SKUs."
+        expr: CUMULATIVE_STRESS_SCORE
+        data_type: NUMBER
+        default_aggregation: max
+
+      - name: predicted_rul_hours
+        description: "The estimated Remaining Useful Life (RUL) of the equipment in hours before maintenance intervention is required."
+        expr: PREDICTED_RUL_HOURS
+        data_type: NUMBER
+        default_aggregation: avg
+  
+  - name: ASSET_RUL_PREDICTIONS
+    description: "Predictive model output forecasting the Remaining Useful Life (RUL) and exact failure timestamp of factory equipment."
+    base_table:
+      database: OEE_COMMAND_CENTER
+      schema: FACTORY_FLOOR
+      table: ASSET_RUL_PREDICTIONS
+
+    dimensions:
+      - name: equipment_id
+        description: "The physical asset identifier."
+        expr: EQUIPMENT_ID
+        data_type: TEXT
+        unique: true
+
+    time_dimensions:
+      - name: predicted_failure_timestamp
+        description: "The forecasted exact date and time the asset will breach critical thermal failure limits."
+        expr: PREDICTED_FAILURE_TIMESTAMP
+        data_type: TIMESTAMP
+        unique: false
+
+    measures:
+      - name: rul_hours
+        description: "The Remaining Useful Life (RUL) in hours until the machine fails. Lower numbers indicate imminent failure."
+        expr: RUL_HOURS
+        data_type: NUMBER
+        default_aggregation: min
