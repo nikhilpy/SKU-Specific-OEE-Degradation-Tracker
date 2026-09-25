@@ -57,7 +57,7 @@ def execute_sql_file(conn, sql_file):
         cursor.close()
 
 
-def main():
+def parse_pdf():
 
     conn = None
 
@@ -87,7 +87,3 @@ def main():
             conn.close()
 
         print("\nSnowflake connection closed.")
-
-
-if __name__ == "__main__":
-    main()

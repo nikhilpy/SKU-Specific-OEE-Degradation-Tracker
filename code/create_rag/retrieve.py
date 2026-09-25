@@ -66,7 +66,7 @@ def retrieve_documents(conn, user_query):
         cursor.close()
 
 
-def main():
+def retireve():
 
     user_query = input("\nEnter your OEM manual query: ").strip()
 
@@ -95,7 +95,3 @@ def main():
         if conn:
             conn.close()
             print("\nSnowflake connection closed.")
-
-
-if __name__ == "__main__":
-    main()

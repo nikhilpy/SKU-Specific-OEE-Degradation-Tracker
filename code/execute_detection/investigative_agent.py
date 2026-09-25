@@ -64,14 +64,7 @@ def investigate(diagnosis):
         "oem_evidence": oem_result
     }
 
-    return investigation
-
-
-if __name__ == "__main__":
-
-    diagnosis = diagnostic.diagnosis
-
-    investigation = investigate(diagnosis)
-
     print("\n===== INVESTIGATIVE AGENT =====")
     print(json.dumps(investigation, indent=4))
+
+    return investigation

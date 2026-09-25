@@ -35,15 +35,15 @@ def execute(investigation):
         "oem_evidence": investigation["oem_evidence"]
     }
 
+    print("\n===== EXECUTION AGENT =====")
+    print(json.dumps(execution_result, indent=4))
+
     return execution_result
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    with open("investigation.json", "r") as f:
-        investigation = json.load(f)
+#     with open("investigation.json", "r") as f:
+#         investigation = json.load(f)
 
-    result = execute(investigation)
-
-    print("\n===== EXECUTION AGENT =====")
-    print(json.dumps(result, indent=4))
+#     result = execute(investigation)

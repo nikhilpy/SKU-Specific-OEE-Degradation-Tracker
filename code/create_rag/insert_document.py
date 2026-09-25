@@ -88,7 +88,7 @@ def execute_sql_file(conn, sql_file):
         cursor.close()
 
 
-def main():
+def insert_document():
 
     conn = None
 
@@ -114,7 +114,3 @@ def main():
         if conn:
             conn.close()
             print("\nSnowflake connection closed.")
-
-
-if __name__ == "__main__":
-    main()

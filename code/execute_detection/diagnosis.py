@@ -1,4 +1,4 @@
-import predictive
+from predictive import predict
 
 
 RUL_THRESHOLD_HOURS = 24
@@ -7,8 +7,10 @@ RUL_THRESHOLD_HOURS = 24
 def diagnose(prediction):
     rul = prediction["rul_hours"]
 
+    result = {}
+
     if rul <= RUL_THRESHOLD_HOURS:
-        return {
+        result = {
             "failure_flag": True,
             "equipment_id": prediction["equipment_id"],
             "rul_hours": rul,
@@ -19,8 +21,9 @@ def diagnose(prediction):
             ),
             "next_agent": "investigative_agent"
         }
+        
 
-    return {
+    result = {
         "failure_flag": False,
         "equipment_id": prediction["equipment_id"],
         "rul_hours": rul,
@@ -29,14 +32,9 @@ def diagnose(prediction):
         "next_agent": None
     }
 
-
-if __name__ == "__main__":
-
-    prediction = predictive.result
-
-    diagnosis = diagnose(prediction)
-
     print("\n===== DIAGNOSTIC AGENT =====")
 
-    for key, value in diagnosis.items():
+    for key, value in result.items():
         print(f"{key}: {value}")
+
+    return result
