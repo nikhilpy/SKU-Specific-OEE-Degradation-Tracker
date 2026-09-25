@@ -3,3 +3,4 @@ pandas
 numpy
 snowflake-connector-python
 coco-cli
+pyarrow>=14.0.1,<24

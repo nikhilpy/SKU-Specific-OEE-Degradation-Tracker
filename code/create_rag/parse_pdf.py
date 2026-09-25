@@ -87,3 +87,6 @@ def parse_pdf():
             conn.close()
 
         print("\nSnowflake connection closed.")
+
+if __name__ == "__main__":
+    parse_pdf()

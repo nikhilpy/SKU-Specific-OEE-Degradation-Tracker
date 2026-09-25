@@ -9,8 +9,12 @@ db_user = os.getenv("SNOWFLAKE_USER")
 db_password = os.getenv("SNOWFLAKE_PASSWORD")
 db_account = os.getenv("SNOWFLAKE_ACCOUNT")
 
-# Local PDF
-PDF_FILE = "LINE-2-PACKAGING OEM Maintenance Manual.pdf"
+# 1. Get the directory where this script is located (c:/Users/.../code/create_rag)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 2. Move up two directories to reach the project root (SKU-Specific-OEE-Degradation-Tracker)
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+# 3. Construct the clean, absolute path to the data folder
+PDF_FILE = os.path.join(PROJECT_ROOT, "data", "LINE-2-PACKAGING OEM Maintenance Manual.pdf")
 
 # Snowflake stage
 STAGE = "@OEE_COMMAND_CENTER.FACTORY_FLOOR.OEM_MANUALS_STAGE"
@@ -36,8 +40,10 @@ def upload_pdf(conn):
 
     try:
         # Upload PDF to Snowflake internal stage
+        # Get absolute path and convert backslashes to forward slashes
+        file_path = os.path.abspath(PDF_FILE).replace('\\', '/')
         sql = f"""
-        PUT 'file://{os.path.abspath(PDF_FILE)}'
+        PUT 'file://{file_path}'
         {STAGE}
         AUTO_COMPRESS=FALSE
         OVERWRITE=TRUE
@@ -99,10 +105,10 @@ def insert_document():
         upload_pdf(conn)
 
         # 2. Execute parsing/chunking SQL
-        execute_sql_file(
-            conn,
-            "04-oem.sql"
-        )
+#        execute_sql_file(
+#            conn,
+#            "04-oem.sql"
+#       )
 
         print("\nOEM document pipeline completed.")
 
@@ -114,3 +120,6 @@ def insert_document():
         if conn:
             conn.close()
             print("\nSnowflake connection closed.")
+
+if __name__ == "__main__":
+    insert_document()
