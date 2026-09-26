@@ -1,13 +1,15 @@
 import os
+from pypdf import PdfReader
 import snowflake.connector
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 db_user = os.getenv("SNOWFLAKE_USER")
 db_password = os.getenv("SNOWFLAKE_PASSWORD")
 db_account = os.getenv("SNOWFLAKE_ACCOUNT")
+
+PDF_FILE = "LINE-2-PACKAGING OEM Maintenance Manual.pdf"
 
 
 def get_connection():
@@ -23,70 +25,110 @@ def get_connection():
     )
 
 
-def execute_sql_file(conn, sql_file):
-    print(f"\nExecuting {sql_file}...")
+def chunk_text(text, chunk_size=2000, overlap=300):
+    chunks = []
 
-    cursor = conn.cursor()
+    start = 0
 
-    try:
-        with open(sql_file, "r", encoding="utf-8") as f:
-            sql = f.read()
+    while start < len(text):
+        end = start + chunk_size
 
-        statements = [
-            statement.strip()
-            for statement in sql.split(";")
-            if statement.strip()
-        ]
+        chunks.append(text[start:end])
 
-        for i, statement in enumerate(statements, start=1):
+        start = end - overlap
 
-            print(f"\n[{i}/{len(statements)}]")
-            print(statement[:200])
-
-            cursor.execute(statement)
-
-            if cursor.description:
-                rows = cursor.fetchall()
-
-                for row in rows:
-                    print(row)
-
-        print(f"\nSuccessfully executed: {sql_file}")
-
-    finally:
-        cursor.close()
+    return chunks
 
 
 def parse_pdf():
 
     conn = None
+    cursor = None
 
     try:
+        script_dir = os.path.dirname(
+            os.path.abspath(__file__)
+        )
+
+        project_root = os.path.abspath(
+            os.path.join(script_dir, "..", "..")
+        )
+
+        pdf_path = os.path.join(
+            project_root,
+            "data",
+            PDF_FILE
+        )
+
+        print(f"Reading PDF: {pdf_path}")
+
+        reader = PdfReader(pdf_path)
+
         conn = get_connection()
+        cursor = conn.cursor()
 
-        # 1. Parse PDF and create chunks
-        execute_sql_file(
-            conn,
-            "05-parse.sql"
+        sql = """
+            INSERT INTO OEM_MANUAL_CHUNKS
+            (
+                FILE_NAME,
+                CHUNK_INDEX,
+                CHUNK_TEXT
+            )
+            VALUES (%s, %s, %s)
+        """
+
+        chunk_index = 0
+
+        for page_number, page in enumerate(
+            reader.pages,
+            start=1
+        ):
+
+            text = page.extract_text()
+
+            if not text:
+                continue
+
+            chunks = chunk_text(text)
+
+            for chunk in chunks:
+
+                cursor.execute(
+                    sql,
+                    (
+                        PDF_FILE,
+                        chunk_index,
+                        chunk
+                    )
+                )
+
+                chunk_index += 1
+
+        conn.commit()
+
+        print(
+            f"Inserted {chunk_index} chunks "
+            "into OEM_MANUAL_CHUNKS"
         )
-
-        # 2. Create/update Cortex Search Service
-        execute_sql_file(
-            conn,
-            "06-cortex.sql"
-        )
-
-        print("\nDocument processing + Cortex Search setup completed.")
 
     except Exception as e:
+
+        if conn:
+            conn.rollback()
+
         print("\nERROR:")
         print(e)
 
     finally:
+
+        if cursor:
+            cursor.close()
+
         if conn:
             conn.close()
 
         print("\nSnowflake connection closed.")
+
 
 if __name__ == "__main__":
     parse_pdf()
