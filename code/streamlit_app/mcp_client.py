@@ -22,6 +22,9 @@ Predicted bearing failure in {payload.get('Failure_Horizon')} hours.
     # For now, we stub the actual execution unless we have a specific CLI wrapper available.
     # We will just write a log and pretend it succeeded for the stub if the token is REPLACE_ME.
     
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env')
+    load_dotenv(env_path)
     token = os.getenv("SLACK_BOT_TOKEN")
     if token == "xoxb-REPLACE_ME" or not token:
         return False, "Slack Bot Token is not configured. Please set it in .env or MCP config."

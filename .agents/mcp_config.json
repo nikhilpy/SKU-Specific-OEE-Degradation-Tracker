@@ -5,11 +5,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-slack@latest"
-      ],
-      "env": {
-        "SLACK_BOT_TOKEN": "xoxb-REPLACE_ME",
-        "SLACK_TEAM_ID": "REPLACE_ME"
-      }
+      ]
     }
   }
 }

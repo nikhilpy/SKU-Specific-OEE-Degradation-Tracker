@@ -1,6 +1,6 @@
 import streamlit as st
 import datetime
-from agent_stub import ask_investigative_agent
+from agent_stub import ask_investigative_agent, _retrieve_oem_constraints
 from mcp_client import post_slack_alert
 from snowflake_conn import get_active_session
 
@@ -39,11 +39,14 @@ st.markdown("---")
 col1, col2 = st.columns([1, 4])
 with col1:
     if st.button("🚨 Mitigate Impact", type="primary", use_container_width=True):
+        # Fetch live OEM constraints from Phase 3 Cortex Search Service
+        oem_constraints = _retrieve_oem_constraints(context.get('equipment_id', ''))
+
         payload = {
             "Equipment_ID": context.get('equipment_id'),
             "Failure_Horizon": context.get('rul'),
             "SKU_ID": context.get('sku'),
-            "OEM_Constraints": "Max Sustained Temp: 90°C" # Stubbed constraint
+            "OEM_Constraints": oem_constraints  # Live from OEM_MANUAL_SEARCH (Phase 3)
         }
         
         with st.spinner("Invoking Execution Agent via Slack MCP..."):
