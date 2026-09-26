@@ -1,4 +1,3 @@
-import diagnostic
 import json
 
 
@@ -32,7 +31,7 @@ def search_oem_manual(query):
     }
 
 
-def investigate(diagnosis):
+def investigate(diagnosis, oem_evidence=None):
 
     if not diagnosis["failure_flag"]:
         return {
@@ -45,12 +44,13 @@ def investigate(diagnosis):
     sku = get_active_sku(equipment_id)
 
     # 2. Query OEM manual through Cortex Search
-    query = (
-        f"OEM operating limits for {equipment_id}, "
-        f"temperature and vibration"
-    )
+    if oem_evidence is None:
+        query = (
+            f"OEM operating limits for {equipment_id}, "
+            f"temperature and vibration"
+        )
 
-    oem_result = search_oem_manual(query)
+        oem_evidence = search_oem_manual(query)
 
     # 3. Create investigation payload
     investigation = {
@@ -61,10 +61,18 @@ def investigate(diagnosis):
         "predicted_failure_time": diagnosis[
             "predicted_failure_time"
         ],
-        "oem_evidence": oem_result
+        "oem_evidence": oem_evidence
     }
 
     print("\n===== INVESTIGATIVE AGENT =====")
     print(json.dumps(investigation, indent=4))
 
     return investigation
+
+if __name__ == "__main__":
+    print(investigate({"failure_flag": True,
+        "equipment_id": "LINE-2-PACKAGING",
+        "rul_hours": 0.39,
+        "predicted_failure_time": "1900-01-01 16:23:18.561151079",
+        "reason": "Predicted RUL (0.39 hours) is below the 24-hour threshold",
+        "next_agent": "investigative_agent"}))

@@ -7,3 +7,4 @@ pyarrow>=14.0.1,<24
 streamlit
 snowflake-snowpark-python
 mcp
+pypdf
