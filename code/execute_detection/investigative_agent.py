@@ -13,6 +13,7 @@ def search_oem_manual(query):
     """
     Replace this with your existing Cortex Search function.
     """
+    print("Hi")
     # Example result from Cortex Search
     return {
         "source": "LINE-2-PACKAGING OEM Maintenance Manual",
@@ -64,10 +65,41 @@ def investigate(diagnosis, oem_evidence=None):
         "oem_evidence": oem_evidence
     }
 
-    print("\n===== INVESTIGATIVE AGENT =====")
-    print(json.dumps(investigation, indent=4))
-
-    return investigation
+    if not investigation.get("failure_flag"):
+            return {
+                "status": "NO_ACTION",
+                "message": "No failure detected."
+            }
+    
+    rul = investigation["rul_hours"]
+    
+    if rul <= 6:
+        priority = "CRITICAL"
+        action = "IMMEDIATE_MAINTENANCE"
+    elif rul <= 24:
+        priority = "HIGH"
+        action = "SCHEDULE_MAINTENANCE"
+    else:
+        priority = "MEDIUM"
+        action = "MONITOR_EQUIPMENT"
+    
+    execution_result = {
+            "equipment_id": investigation["equipment_id"],
+            "sku": investigation["sku"],
+            "action": action,
+            "priority": priority,
+            "rul_hours": rul,
+            "predicted_failure_time": investigation[
+                "predicted_failure_time"
+            ],
+            "reason": "Predicted degradation threshold exceeded.",
+            "oem_evidence": investigation["oem_evidence"]
+        }
+    
+    print("\n===== EXECUTION AGENT =====")
+    print(json.dumps(execution_result, indent=4))
+    
+    return execution_result
 
 if __name__ == "__main__":
     print(investigate({"failure_flag": True,

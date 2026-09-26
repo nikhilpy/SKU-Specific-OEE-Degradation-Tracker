@@ -2,11 +2,10 @@ import json
 import os
 import sys
 
-from diagnosis import diagnose
-from execution import execute
-from investigation import create_investigation
 from investigative_agent import investigate
-from predictive import predict
+from prediction import predict
+from retrieve import get_connection, retrieve_documents
+from future_prediction import future_prediction
 
 CODE_ROOT = os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +27,6 @@ def search_oem_manual(query):
     conn = None
 
     try:
-        from retrieve import get_connection, retrieve_documents
 
         conn = get_connection()
 
@@ -48,40 +46,24 @@ def run_workflow():
 
     prediction = predict()
 
-    print(json.dumps(prediction, indent=4))
-
-    diagnosis_result = diagnose(prediction)
-
-    if not diagnosis_result["failure_flag"]:
-        return diagnosis_result
+    if not prediction["failure_flag"]:
+        return prediction
 
     query = (
         f"OEM operating limits for "
-        f"{diagnosis_result['equipment_id']}, "
+        f"{prediction['equipment_id']}, "
         f"temperature and vibration"
     )
 
     investigation_result = investigate(
-        diagnosis_result,
+        prediction,
         oem_evidence=search_oem_manual(query)
     )
 
-    execution_result = execute(investigation_result)
-
-    create_investigation(
-        equipment_id=investigation_result["equipment_id"],
-        sku=investigation_result["sku"],
-        rul_hours=investigation_result["rul_hours"],
-        predicted_failure_time=investigation_result[
-            "predicted_failure_time"
-        ],
-        current_temperature=prediction["current_temperature"],
-        current_vibration=prediction["current_vibration"],
-        oem_evidence=investigation_result["oem_evidence"]
-    )
-
-    return execution_result
-
+    final_prediction = future_prediction(investigation_result)
+    print("Final", end="\n")
+    print(json.dumps(final_prediction, indent=4))
+    return final_prediction
 
 if __name__ == "__main__":
     run_workflow()

@@ -96,7 +96,7 @@ def predict():
 
     predicted_failure_time = (
         latest_timestamp +
-        pd.Timedelta(hours=rul_hours)
+        pd.Timedelta(float(rul_hours), unit="h")
     )
 
 
@@ -111,42 +111,33 @@ def predict():
     # -----------------------------
     # Output
     # -----------------------------
-    result = {
-        "equipment_id": equipment,
-        "current_temperature": round(current_temperature, 2),
-        "current_vibration": round(current_vibration, 2),
 
-        "temperature_rate_per_hour": round(
-            temperature_rate, 4
-        ),
+    if threshold_exceeded:
+        result = {
+            "failure_flag": True,
+            "equipment_id": equipment,
+            "rul_hours": rul_hours,
+            "predicted_failure_time": str(predicted_failure_time),
+            "reason": (
+                    f"Predicted RUL ({rul_hours} hours) is below "
+                    f"the {FAILURE_THRESHOLD_HOURS}-hour threshold."
+                ),
+            "next_agent": "investigative_agent"
+            }
+    else:
+        result = {
+                "failure_flag": False,
+                "equipment_id": equipment,
+                "rul_hours": rul_hours,
+                "predicted_failure_time": str(predicted_failure_time),
+                "reason": "Equipment is currently above the failure threshold.",
+                "next_agent": None
+            }
 
-        "vibration_rate_per_hour": round(
-            vibration_rate, 4
-        ),
+    print("\n===== PREDICTION AGENT =====")
 
-        "temperature_rul_hours": round(
-            temperature_rul, 2
-        ),
-
-        "vibration_rul_hours": round(
-            vibration_rul, 2
-        ),
-
-        "rul_hours": round(rul_hours, 2),
-
-        "limiting_parameter": limiting_parameter,
-
-        "predicted_failure_time": str(
-            predicted_failure_time
-        ),
-
-        "failure_threshold_hours":
-            FAILURE_THRESHOLD_HOURS,
-
-        "threshold_exceeded":
-            threshold_exceeded
-    }
-
+    for key, value in result.items():
+        print(f"{key}: {value}")
 
     return result
 
