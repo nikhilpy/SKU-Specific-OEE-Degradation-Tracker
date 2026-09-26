@@ -64,17 +64,18 @@ def parse_pdf():
     try:
         conn = get_connection()
 
+        # Get the absolute path of the directory where this script is saved
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # 2. Move up two directories to reach the project root (SKU-Specific-OEE-Degradation-Tracker)
+        project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
         # 1. Parse PDF and create chunks
-        execute_sql_file(
-            conn,
-            "05-parse.sql"
-        )
+        sql_path_05 = os.path.join(project_root, "sql", "05-parse.sql")
+        execute_sql_file(conn, sql_path_05)
 
         # 2. Create/update Cortex Search Service
-        execute_sql_file(
-            conn,
-            "06-cortex.sql"
-        )
+        sql_path_06 = os.path.join(project_root, "sql", "06-cortex.sql")
+        execute_sql_file(conn, sql_path_06)
 
         print("\nDocument processing + Cortex Search setup completed.")
 
