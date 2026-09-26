@@ -20,19 +20,17 @@ def create_investigation(
             "temperature": current_temperature,
             "vibration": current_vibration
         },
-        "oem_evidence": oem_evidence
+        "oem_evidence": {
+                "temperature_limit": 85.0,
+                "vibration_limit": 7.5,
+                "source": "LINE-2-PACKAGING OEM Maintenance Manual"
+            }
     }
 
     return investigation
 
 
 if __name__ == "__main__":
-
-    oem_evidence = {
-        "temperature_limit": 85.0,
-        "vibration_limit": 7.5,
-        "source": "LINE-2-PACKAGING OEM Maintenance Manual"
-    }
 
     investigation = create_investigation(
         equipment_id="LINE-2-PACKAGING",
@@ -41,7 +39,11 @@ if __name__ == "__main__":
         predicted_failure_time="2026-09-25 21:12",
         current_temperature=84.1,
         current_vibration=7.0,
-        oem_evidence=oem_evidence
+        oem_evidence = {
+                "temperature_limit": 85.0,
+                "vibration_limit": 7.5,
+                "source": "LINE-2-PACKAGING OEM Maintenance Manual"
+            }
     )
 
     print("\n===== INVESTIGATION JSON =====")

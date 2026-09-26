@@ -1,0 +1,16 @@
+{
+    "equipment_id": "LINE-2-PACKAGING",
+    "sku": "SKU-899",
+    "failure_flag": true,
+    "rul_hours": 5.2,
+    "predicted_failure_time": "2026-09-25 21:12",
+    "current_conditions": {
+        "temperature": 84.1,
+        "vibration": 7.0
+    },
+    "oem_evidence": {
+        "temperature_limit": 85.0,
+        "vibration_limit": 7.5,
+        "source": "LINE-2-PACKAGING OEM Maintenance Manual"
+    }
+}

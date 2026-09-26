@@ -1,12 +1,17 @@
+import os
 import pandas as pd
 from datetime import datetime, timedelta
+
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 # -----------------------------
 # Configuration
 # -----------------------------
 
 def predict():
-    CSV_FILE = "device_data.csv"
+    CSV_FILE = os.path.join(PROJECT_ROOT, "data", "device_data.csv")
 
     TEMPERATURE_LIMIT = 85.0
     VIBRATION_LIMIT = 7.5
@@ -98,7 +103,7 @@ def predict():
     # -----------------------------
     # Failure threshold
     # -----------------------------
-    threshold_exceeded = (
+    threshold_exceeded = bool(
         rul_hours <= FAILURE_THRESHOLD_HOURS
     )
 
@@ -144,3 +149,7 @@ def predict():
 
 
     return result
+
+if __name__ == "__main__":
+    prediction = predict()
+    print(prediction)
