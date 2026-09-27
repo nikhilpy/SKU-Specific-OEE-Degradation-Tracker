@@ -77,9 +77,6 @@ else:
         )
         cs = conn.cursor()
         try:
-            # Create stage for semantic models if it doesn't already exist
-            cs.execute("CREATE STAGE IF NOT EXISTS SEMANTIC_MODELS_STAGE DIRECTORY = (ENABLE = TRUE)")
-            
             # Stage the YAML semantic model definition
             abs_yaml_path = os.path.abspath(yaml_path).replace("\\", "/")
             cs.execute(f"PUT 'file://{abs_yaml_path}' @SEMANTIC_MODELS_STAGE AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
