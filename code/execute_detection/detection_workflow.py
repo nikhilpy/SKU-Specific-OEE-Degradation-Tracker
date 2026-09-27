@@ -2,47 +2,17 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "misc"
+))
+
+from snowflake_client import search_oem_manual
 from investigative_agent import investigate
 from prediction import predict
-from retrieve import get_connection, retrieve_documents
 from future_prediction import future_prediction
-
-CODE_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
-
-RAG_DIR = os.path.join(CODE_ROOT, "create_rag")
-
-
-def search_oem_manual(query):
-    """
-    Query the Cortex Search service in create_rag/retrieve.py.
-
-    Returns None when Snowflake is unreachable so the pipeline can
-    fall back to the stubbed OEM limits in investigative_agent.py.
-    """
-    if RAG_DIR not in sys.path:
-        sys.path.insert(0, RAG_DIR)
-
-    conn = None
-
-    try:
-
-        conn = get_connection()
-
-        return retrieve_documents(conn, query)
-
-    except Exception as e:
-        print(f"\nOEM retrieval unavailable: {e}")
-        return None
-
-    finally:
-        if conn:
-            conn.close()
 
 
 def run_workflow():
-    print("===== PREDICTIVE AGENT =====")
 
     prediction = predict()
 

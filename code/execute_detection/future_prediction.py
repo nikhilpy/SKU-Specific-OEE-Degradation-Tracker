@@ -1,5 +1,16 @@
-from code.llm_setup.llm import complete
 import json
+import os
+import sys
+
+LLM_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "llm_setup"
+)
+
+if LLM_DIR not in sys.path:
+    sys.path.insert(0, LLM_DIR)
+
+from llm import ask_json
 
 def future_prediction(investigation):
 
@@ -25,6 +36,27 @@ Return your response as JSON with:
 - action
 - priority
 - reasoning
+
+<OUTPUT FORMAT>
+{
+    "assessment": "Predicted degradation due to excessive temperature and vibration",
+    "possible_causes": [
+        "Insufficient cooling system capacity",
+        "Misaligned or worn-out machinery components",
+        "Inadequate lubrication or maintenance",
+        "Overloading or improper operation"
+    ],
+    "recommended_checks": [
+        "Temperature sensor calibration and accuracy check",
+        "Vibration analysis and balancing of machinery components",
+        "Cooling system capacity and performance evaluation",
+        "Lubrication and maintenance schedule review"
+    ],
+    "action": "IMMEDIATE_MAINTENANCE",
+    "priority": "CRITICAL",
+    "reasoning": "Based on the OEM evidence, the equipment has exceeded the predicted degradation threshold. The excessive temperature (85.0\u00b0C) and vibration (7.5 mm/s) levels indicate potential machinery component wear or misalignment. Immediate maintenance is required to prevent equipment failure and ensure production continuity."
+}
+</OUTPUT FORMAT>
 """
 
-    return complete(prompt)
+    return ask_json(prompt)

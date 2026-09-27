@@ -1,28 +1,14 @@
 import os
+import sys
 from pypdf import PdfReader
-import snowflake.connector
-from dotenv import load_dotenv
 
-load_dotenv()
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "misc"
+))
 
-db_user = os.getenv("SNOWFLAKE_USER")
-db_password = os.getenv("SNOWFLAKE_PASSWORD")
-db_account = os.getenv("SNOWFLAKE_ACCOUNT")
+from snowflake_client import get_connection
 
 PDF_FILE = "LINE-2-PACKAGING OEM Maintenance Manual.pdf"
-
-
-def get_connection():
-    print("Testing Snowflake connection...")
-
-    return snowflake.connector.connect(
-        account=db_account,
-        user=db_user,
-        password=db_password,
-        warehouse="COMPUTE_WH",
-        database="OEE_COMMAND_CENTER",
-        schema="FACTORY_FLOOR"
-    )
 
 
 def chunk_text(text, chunk_size=2000, overlap=300):

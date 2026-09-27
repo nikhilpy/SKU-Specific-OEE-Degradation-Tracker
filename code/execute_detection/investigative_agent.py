@@ -1,4 +1,12 @@
 import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "misc"
+))
+
+from snowflake_client import search_oem_manual
 
 
 def get_active_sku(equipment_id):
@@ -7,29 +15,6 @@ def get_active_sku(equipment_id):
     For testing, we return the SKU from your synthetic scenario.
     """
     return "SKU-899"
-
-
-def search_oem_manual(query):
-    """
-    Replace this with your existing Cortex Search function.
-    """
-    print("Hi")
-    # Example result from Cortex Search
-    return {
-        "source": "LINE-2-PACKAGING OEM Maintenance Manual",
-        "evidence": [
-            {
-                "parameter": "temperature",
-                "limit": 85.0,
-                "unit": "°C"
-            },
-            {
-                "parameter": "vibration",
-                "limit": 7.5,
-                "unit": "mm/s"
-            }
-        ]
-    }
 
 
 def investigate(diagnosis, oem_evidence=None):

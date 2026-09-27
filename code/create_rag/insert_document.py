@@ -1,13 +1,11 @@
 import os
-import snowflake.connector
-from dotenv import load_dotenv
+import sys
 
-# Load environment variables
-load_dotenv()
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "misc"
+))
 
-db_user = os.getenv("SNOWFLAKE_USER")
-db_password = os.getenv("SNOWFLAKE_PASSWORD")
-db_account = os.getenv("SNOWFLAKE_ACCOUNT")
+from snowflake_client import get_connection
 
 # 1. Get the directory where this script is located (c:/Users/.../code/create_rag)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,19 +16,6 @@ PDF_FILE = os.path.join(PROJECT_ROOT, "data", "LINE-2-PACKAGING OEM Maintenance 
 
 # Snowflake stage
 STAGE = "@OEE_COMMAND_CENTER.FACTORY_FLOOR.OEM_MANUALS_STAGE"
-
-
-def get_connection():
-    print("Testing Snowflake connection...")
-
-    return snowflake.connector.connect(
-        account=db_account,
-        user=db_user,
-        password=db_password,
-        warehouse="COMPUTE_WH",
-        database="OEE_COMMAND_CENTER",
-        schema="FACTORY_FLOOR"
-    )
 
 
 def upload_pdf(conn):
