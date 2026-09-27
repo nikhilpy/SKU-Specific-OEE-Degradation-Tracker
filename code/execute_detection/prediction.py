@@ -134,13 +134,18 @@ def predict(equipment_id="LINE-2-PACKAGING"):
     ORDER BY "TIMESTAMP" DESC
     LIMIT 100
 """)
+    # PROJECT_ROOT = os.path.dirname(
+    #     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # )
+    # CSV_FILE = os.path.join(PROJECT_ROOT, "data", "device_data.csv")
+    # df = pd.read_csv(CSV_FILE)
 
-    print(df)
+    # if df.empty:
+    #     raise ValueError(
+    #         "IT_OT_CONVERGED returned no telemetry rows"
+    #     )
 
-    if df.empty:
-        raise ValueError(
-            "IT_OT_CONVERGED returned no telemetry rows"
-        )
+    # df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M")
 
     df = df.sort_values("Timestamp").reset_index(drop=True)
 

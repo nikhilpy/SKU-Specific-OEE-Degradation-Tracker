@@ -111,6 +111,39 @@ def search_documents(conn, user_query, limit=SEARCH_LIMIT):
         cursor.close()
 
 
+# Per-purpose search vocabulary, so each caller asks a different
+# question of the manual while the query format stays in one place
+SEARCH_INTENTS = {
+    "threshold": (
+        "operating limit threshold maximum temperature "
+        "vibration remaining useful life maintenance alert"
+    ),
+    "investigation": (
+        "operating limit threshold maximum temperature vibration "
+        "symptom root cause error corrective action"
+    )
+}
+
+
+def build_query(equipment_id, intent):
+    """
+    Build a manual search query for one purpose.
+
+    intent: "threshold" to read the limits, "investigation" to read
+            the symptoms and root causes behind them
+    """
+    if intent not in SEARCH_INTENTS:
+        raise ValueError(
+            f"Unknown intent {intent!r}, "
+            f"expected one of {sorted(SEARCH_INTENTS)}"
+        )
+
+    return (
+        f"OEM operating limits for {equipment_id}, "
+        f"{SEARCH_INTENTS[intent]}"
+    )
+
+
 def query_terms(query):
     """
     Reduce a natural-language query to searchable keywords.

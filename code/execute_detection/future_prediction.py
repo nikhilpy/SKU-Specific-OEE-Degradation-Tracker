@@ -12,6 +12,30 @@ if LLM_DIR not in sys.path:
 
 from llm import ask_json
 
+# Kept as a plain string: inside the f-string below its literal
+# braces would be parsed as format fields.
+OUTPUT_SCHEMA = """
+{
+    "assessment": "Predicted degradation due to excessive temperature and vibration",
+    "possible_causes": [
+        "Insufficient cooling system capacity",
+        "Misaligned or worn-out machinery components",
+        "Inadequate lubrication or maintenance",
+        "Overloading or improper operation"
+    ],
+    "recommended_checks": [
+        "Temperature sensor calibration and accuracy check",
+        "Vibration analysis and balancing of machinery components",
+        "Cooling system capacity and performance evaluation",
+        "Lubrication and maintenance schedule review"
+    ],
+    "action": "IMMEDIATE_MAINTENANCE",
+    "priority": "CRITICAL",
+    "reasoning": "Based on the OEM evidence, the equipment has exceeded the predicted degradation threshold."
+}
+"""
+
+
 def future_prediction(investigation):
 
     prompt = f"""
@@ -29,33 +53,13 @@ Using the telemetry, RUL, active SKU, and OEM evidence:
 3. Recommend the next maintenance checks.
 4. Recommend an appropriate action and priority.
 
-Return your response as JSON with:
-- assessment
-- possible_causes
-- recommended_checks
-- action
-- priority
-- reasoning
+Quote the actual limits and RUL from the investigation data. Do not
+reuse values from this example.
+
+Return your response as JSON matching the shape below.
 
 <OUTPUT FORMAT>
-{
-    "assessment": "Predicted degradation due to excessive temperature and vibration",
-    "possible_causes": [
-        "Insufficient cooling system capacity",
-        "Misaligned or worn-out machinery components",
-        "Inadequate lubrication or maintenance",
-        "Overloading or improper operation"
-    ],
-    "recommended_checks": [
-        "Temperature sensor calibration and accuracy check",
-        "Vibration analysis and balancing of machinery components",
-        "Cooling system capacity and performance evaluation",
-        "Lubrication and maintenance schedule review"
-    ],
-    "action": "IMMEDIATE_MAINTENANCE",
-    "priority": "CRITICAL",
-    "reasoning": "Based on the OEM evidence, the equipment has exceeded the predicted degradation threshold. The excessive temperature (85.0\u00b0C) and vibration (7.5 mm/s) levels indicate potential machinery component wear or misalignment. Immediate maintenance is required to prevent equipment failure and ensure production continuity."
-}
+{OUTPUT_SCHEMA}
 </OUTPUT FORMAT>
 """
 
