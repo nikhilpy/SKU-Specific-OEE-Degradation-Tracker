@@ -38,7 +38,7 @@ for msg in st.session_state['messages']:
 st.markdown("---")
 col1, col2 = st.columns([1, 4])
 with col1:
-    if st.button("🚨 Mitigate Impact", type="primary", use_container_width=True):
+    if st.button("🚨 Mitigate Impact", type="primary"):
         # Fetch live OEM constraints from Phase 3 Cortex Search Service
         oem_constraints = _retrieve_oem_constraints(context.get('equipment_id', ''))
 

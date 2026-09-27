@@ -18,7 +18,7 @@ try:
     if history_df.empty:
         st.info("No alerts have been mitigated yet.")
     else:
-        st.dataframe(history_df, use_container_width=True)
+        st.dataframe(history_df, width='stretch')
         
         # Add CSV export
         csv = history_df.to_csv(index=False).encode('utf-8')

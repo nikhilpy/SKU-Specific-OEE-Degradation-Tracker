@@ -68,7 +68,7 @@ try:
     # Render table with column formatting
     st.dataframe(
         data_df,
-        use_container_width=True,
+        width='stretch',
         column_config={
             "TEMPERATURE_C": st.column_config.ProgressColumn("Temperature (°C)", format="%.1f", min_value=0, max_value=120),
             "VIBRATION_RMS": st.column_config.ProgressColumn("Vibration (RMS)", format="%.2f", min_value=0, max_value=5.0),

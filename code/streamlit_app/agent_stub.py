@@ -5,24 +5,28 @@ import snowflake.connector
 from dotenv import load_dotenv
 from snowflake_conn import get_active_session
 
-SEARCH_SERVICE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.OEM_MANUAL_SEARCH"
+# Resolve .env from project root (two levels up from streamlit_app/)
+_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    ".env",
+)
+load_dotenv(_ENV_PATH)
+
+_DB       = os.getenv("SNOWFLAKE_DATABASE", "OEE_COMMAND_CENTER")
+_SCHEMA   = os.getenv("SNOWFLAKE_SCHEMA",   "FACTORY_FLOOR")
+_WH       = os.getenv("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
+SEARCH_SERVICE = f"{_DB}.{_SCHEMA}.OEM_MANUAL_SEARCH"
 
 
 def _get_connector_connection():
     """Creates a raw snowflake.connector connection (used for Cortex Search Preview)."""
-    load_dotenv()
-    env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        '.env'
-    )
-    load_dotenv(env_path)
     return snowflake.connector.connect(
         account=os.getenv("SNOWFLAKE_ACCOUNT"),
         user=os.getenv("SNOWFLAKE_USER"),
         password=os.getenv("SNOWFLAKE_PASSWORD"),
-        warehouse="COMPUTE_WH",
-        database="OEE_COMMAND_CENTER",
-        schema="FACTORY_FLOOR"
+        warehouse=_WH,
+        database=_DB,
+        schema=_SCHEMA,
     )
 
 
@@ -61,7 +65,7 @@ def _retrieve_oem_constraints(equipment_id: str) -> str:
         # Cortex Search Service not yet deployed — fall back gracefully
         pass
 
-    return "Max Sustained Temp: 90°C (fallback — OEM_MANUAL_SEARCH not yet deployed)"
+    return "Max Sustained Temp: 85°C, Max Vibration: 7.5 mm/s (fallback — OEM_MANUAL_SEARCH not yet deployed; run sql/06-cortex.sql to enable live retrieval)"
 
 
 def ask_investigative_agent(question: str, context: dict) -> str:
