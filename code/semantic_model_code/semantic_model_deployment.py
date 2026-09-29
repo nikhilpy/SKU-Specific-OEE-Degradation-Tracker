@@ -1,5 +1,6 @@
 import os
 import subprocess
+import urllib.parse
 import snowflake.connector
 from dotenv import load_dotenv
 
@@ -77,8 +78,12 @@ else:
         )
         cs = conn.cursor()
         try:
-            # Stage the YAML semantic model definition
-            abs_yaml_path = os.path.abspath(yaml_path).replace("\\", "/")
+            # Spaces in the project path must be percent-encoded for Snowflake's
+            # PUT tokeniser (e.g. 'Saas Startup' → 'Saas%20Startup').
+            abs_yaml_path = urllib.parse.quote(
+                os.path.abspath(yaml_path).replace("\\", "/"),
+                safe='/:@'
+            )
             cs.execute(f"PUT 'file://{abs_yaml_path}' @SEMANTIC_MODELS_STAGE AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
             
             # Verify staged file

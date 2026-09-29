@@ -1,13 +1,24 @@
+import os
+import sys
 import streamlit as st
-import pandas as pd
+
+# Ensure parent directory is in sys.path for wizard import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from wizard import require_setup, require_infrastructure
 from snowflake_conn import get_active_session
 
 st.set_page_config(page_title="Alerts History", page_icon="📜", layout="wide")
+
+# Ensure setup is complete before accessing page
+require_setup()
+
 st.title("📜 Alerts History & Audit Log")
 
 session = get_active_session()
 if not session:
     st.stop()
+
+require_infrastructure(session)
 
 st.markdown(
     "This page shows the history of all automated mitigation actions "
@@ -52,4 +63,5 @@ except Exception as e:
             "(Table ALERTS_HISTORY not found — it is created on first mitigation)."
         )
     else:
-        st.error(f"Failed to load alerts history: {e}")
+        print(f"Failed to load alerts history: {e}")
+        st.warning("Failed to load alerts history. Please try again later.")

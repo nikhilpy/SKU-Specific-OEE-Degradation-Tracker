@@ -1,5 +1,6 @@
 import os
 import sys
+import urllib.parse
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "misc"
@@ -24,9 +25,12 @@ def upload_pdf(conn):
     cursor = conn.cursor()
 
     try:
-        # Upload PDF to Snowflake internal stage
-        # Get absolute path and convert backslashes to forward slashes
-        file_path = os.path.abspath(PDF_FILE).replace('\\', '/')
+        # Spaces in the path (e.g. 'OEM Maintenance Manual.pdf') must be
+        # percent-encoded or Snowflake's SQL tokeniser splits the token.
+        file_path = urllib.parse.quote(
+            os.path.abspath(PDF_FILE).replace('\\', '/'),
+            safe='/:@'
+        )
         sql = f"""
         PUT 'file://{file_path}'
         {STAGE}
@@ -45,40 +49,6 @@ def upload_pdf(conn):
         cursor.close()
 
 
-def execute_sql_file(conn, sql_file):
-    print(f"\nExecuting {sql_file}...")
-
-    cursor = conn.cursor()
-
-    try:
-        with open(sql_file, "r", encoding="utf-8") as f:
-            sql = f.read()
-
-        statements = [
-            statement.strip()
-            for statement in sql.split(";")
-            if statement.strip()
-        ]
-
-        for i, statement in enumerate(statements, start=1):
-
-            print(f"\n[{i}/{len(statements)}]")
-            print(statement[:200])
-
-            cursor.execute(statement)
-
-            if cursor.description:
-                rows = cursor.fetchall()
-
-                for row in rows:
-                    print(row)
-
-        print(f"\nSuccessfully executed: {sql_file}")
-
-    finally:
-        cursor.close()
-
-
 def insert_document():
 
     conn = None
@@ -88,12 +58,6 @@ def insert_document():
 
         # 1. Upload PDF
         upload_pdf(conn)
-
-        # 2. Execute parsing/chunking SQL
-#        execute_sql_file(
-#            conn,
-#            "04-oem.sql"
-#       )
 
         print("\nOEM document pipeline completed.")
 

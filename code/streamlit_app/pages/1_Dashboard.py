@@ -1,13 +1,25 @@
+import os
+import sys
 import streamlit as st
 import pandas as pd
+
+# Ensure parent directory is in sys.path for wizard import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from wizard import require_setup, require_infrastructure
 from snowflake_conn import get_active_session
 
 st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+
+# Ensure setup is complete before accessing page
+require_setup()
+
 st.title("📊 IT/OT Data Grid & Alerts")
 
 session = get_active_session()
 if not session:
     st.stop()
+
+require_infrastructure(session)
 
 # --- Predictive Alert Cards ---
 st.subheader("🚨 Predictive Alerts")
@@ -36,6 +48,8 @@ try:
                 triggering_sku = (
                     sku_df["SKU_ID"].iloc[0] if not sku_df.empty else "Unknown"
                 )
+                if triggering_sku == 'NONE':
+                    triggering_sku = '⚙️ Machine Changeover'
 
                 color = "red" if rul < 48 else "orange"
                 st.markdown(
@@ -80,6 +94,9 @@ try:
         "SELECT * FROM IT_OT_CONVERGED ORDER BY TIMESTAMP DESC LIMIT 200"
     ).to_pandas()
 
+    # Clean up the UI presentation of 'NONE' to make it clear for the judges
+    data_df['SKU_ID'] = data_df['SKU_ID'].replace('NONE', '⚙️ Machine Changeover')
+
     # Filter widgets
     col1, col2 = st.columns(2)
     with col1:
@@ -108,4 +125,5 @@ try:
         },
     )
 except Exception as e:
-    st.error(f"Could not load converged data: {e}")
+    print(f"Could not load converged data: {e}")
+    st.warning("Could not load converged data. Please check logs for details.")

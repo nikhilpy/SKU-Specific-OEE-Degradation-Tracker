@@ -4,6 +4,7 @@ import sys
 import streamlit as st
 import snowflake.connector
 from dotenv import load_dotenv
+import urllib.request
 from snowflake_conn import get_active_session
 
 # ── Add llm_setup/ to sys.path so llm.py is importable ──────────────────────
@@ -23,16 +24,10 @@ _ENV_PATH = os.path.join(
 )
 load_dotenv(_ENV_PATH)
 
-_DB     = os.getenv("SNOWFLAKE_DATABASE", "OEE_COMMAND_CENTER")
-_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA",   "FACTORY_FLOOR")
-_WH     = os.getenv("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
-_ROLE   = os.getenv("SNOWFLAKE_ROLE", "ACCOUNTADMIN")
-
-# Snowflake Cortex model for the investigative agent
-CORTEX_MODEL = os.getenv("CORTEX_MODEL", "mistral-large2")
-
-# Fully-qualified Cortex Search Service (built by sql/06-cortex.sql)
-SEARCH_SERVICE = f"{_DB}.{_SCHEMA}.OEM_MANUAL_SEARCH"
+_DB     = os.getenv("SNOWFLAKE_DATABASE") or "OEE_COMMAND_CENTER"
+_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA") or "FACTORY_FLOOR"
+_WH     = os.getenv("SNOWFLAKE_WAREHOUSE") or "COMPUTE_WH"
+_ROLE   = os.getenv("SNOWFLAKE_ROLE") or "ACCOUNTADMIN"
 
 # Chunk table (used by the updated search_oem_manual in misc/snowflake_client.py)
 CHUNK_TABLE = f"{_DB}.{_SCHEMA}.OEM_MANUAL_CHUNKS"
@@ -59,17 +54,12 @@ def _build_query(equipment_id: str, intent: str = "investigation") -> str:
     """
     if intent not in _SEARCH_INTENTS:
         raise ValueError(f"Unknown intent {intent!r}")
-    return f"OEM operating limits for {equipment_id}, {_SEARCH_INTENTS[intent]}"
+    # Extract generic equipment type to share manuals across lines
+    parts = equipment_id.split("-")
+    equipment_type = parts[-1] if len(parts) > 1 else equipment_id
+    
+    return f"OEM operating limits for {equipment_type} equipment, {_SEARCH_INTENTS[intent]}"
 
-# ── Fallback OEM limits ───────────────────────────────────────────────────────
-# Matches misc/snowflake_client.FALLBACK_OEM_EVIDENCE structure
-_FALLBACK_OEM_EVIDENCE = {
-    "source": "LINE-2-PACKAGING OEM Maintenance Manual",
-    "evidence": [
-        {"parameter": "temperature", "limit": 85.0, "unit": "°C"},
-        {"parameter": "vibration",   "limit": 7.5,  "unit": "mm/s"},
-    ],
-}
 
 _FALLBACK_OEM_TEXT = (
     "Max Sustained Temp: 85°C, Max Vibration: 7.5 mm/s "
@@ -115,47 +105,6 @@ def _query_terms(query: str) -> list[str]:
     return [t for t in terms if len(t) > 2 and t not in _STOP_WORDS]
 
 
-def _oem_result_to_text(result) -> str:
-    """
-    Convert the structured OEM search result (new dict format from the updated
-    misc/snowflake_client.py) into a plain string for use in prompts.
-
-    The updated search_oem_manual() now returns:
-        {"source": "OEM_MANUAL_CHUNKS", "chunks": [{"text": ..., ...}, ...]}
-    The old Cortex Search Preview returned a JSON string.
-    Both are handled here gracefully.
-    """
-    if not result:
-        return _FALLBACK_OEM_TEXT
-
-    # New format: dict with "chunks" list (from updated snowflake_client.py)
-    if isinstance(result, dict):
-        if "chunks" in result:
-            top_chunks = result["chunks"][:2]
-            oem_text = " | ".join(c.get("text", "")[:300] for c in top_chunks)
-            return f"[From OEM Manual] {oem_text}" if oem_text.strip() else _FALLBACK_OEM_TEXT
-
-        # Fallback dict structure: {"evidence": [...]}
-        if "evidence" in result:
-            parts = [
-                f"Max {e['parameter'].title()}: {e['limit']} {e['unit']}"
-                for e in result.get("evidence", [])
-            ]
-            return ", ".join(parts) if parts else _FALLBACK_OEM_TEXT
-
-    # Legacy: raw JSON string from old CORTEX.SEARCH_PREVIEW path
-    if isinstance(result, str):
-        try:
-            parsed = json.loads(result)
-            results_list = parsed.get("results", [])
-            if results_list:
-                return "[From OEM Manual] " + " | ".join(
-                    r.get("CHUNK_TEXT", "")[:300] for r in results_list[:2]
-                )
-        except (json.JSONDecodeError, AttributeError):
-            return result[:500]
-
-    return _FALLBACK_OEM_TEXT
 
 
 def _retrieve_oem_constraints(equipment_id: str) -> str:
@@ -247,20 +196,113 @@ def _ask_via_ollama(prompt: str) -> str:
     return ollama_complete(prompt)
 
 
-def ask_investigative_agent(question: str, context: dict) -> str:
+def _query_cortex_analyst(question: str, context: dict, status=None) -> str:
     """
-    Investigative Agent for the Streamlit UI.
+    Calls the Snowflake Cortex Analyst REST API using the deployed semantic model.
+    If it generates SQL, it executes it and uses Ollama to summarize the result.
+    """
+    conn = _get_connector_connection()
+    try:
+        host = conn.host
+        url = f"https://{host}/api/v2/cortex/analyst/message"
+        token = conn.rest.token
+        
+        # Construct context for Analyst
+        equip_id = context.get('equipment_id')
+        sku = context.get('sku')
+        if equip_id and sku:
+            analyst_prompt = f"For Equipment {equip_id} and SKU {sku}: {question}"
+        else:
+            analyst_prompt = question
+        
+        if status:
+            status.write("❄️ **Cortex Analyst:** Generating SQL from natural language...")
+        
+        payload = {
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [{"type": "text", "text": analyst_prompt}]
+                }
+            ],
+            "semantic_model_file": f"@{_DB}.{_SCHEMA}.SEMANTIC_MODELS_STAGE/factory_health_ontology.yaml"
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'))
+        req.add_header('Authorization', f'Snowflake Token="{token}"')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Accept', 'application/json')
+        
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                result = json.loads(response.read().decode())
+                
+            messages = result.get('message', {}).get('content', [])
+            sql_query = ""
+            text_response = ""
+            
+            for msg in messages:
+                if msg.get('type') == 'sql':
+                    sql_query = msg.get('statement', '')
+                elif msg.get('type') == 'text':
+                    text_response += msg.get('text', '') + "\n"
+                    
+            if sql_query:
+                # We got SQL from Cortex Analyst, run it!
+                if status:
+                    status.write(f"📊 **Snowflake:** Executing generated SQL query:\n```sql\n{sql_query}\n```")
+                cursor = conn.cursor()
+                cursor.execute(sql_query)
+                rows = cursor.fetchmany(10)
+                columns = [col[0] for col in cursor.description] if cursor.description else []
+                cursor.close()
+                
+                # Use Ollama to format the data nicely
+                if status:
+                    status.write("🤖 **Ollama:** Summarizing raw database results...")
+                summary_prompt = f"You are a helpful factory assistant. The user asked: '{question}'. \nHere is the data pulled from the database:\nColumns: {columns}\nData: {rows}\n\nSummarize this data clearly for the user."
+                return _ask_via_ollama(summary_prompt)
+                
+            return text_response or "Cortex Analyst did not return a valid response."
+            
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode()
+            print(f"Cortex Analyst API Error: {e.code} - {error_body}")
+            return "**Cortex Analyst API Error.** Ensure Cortex Analyst is enabled in your region and account. Check logs for details."
+        except Exception as api_err:
+            print(f"Cortex Analyst Error: {api_err}")
+            return "**Cortex Analyst Error.** Check logs for details."
+            
+    finally:
+        conn.close()
 
-    Primary LLM  : Local Ollama (llm_setup/llm.py) — no Snowflake Cortex needed.
-    Hard fallback: Structured text with priority / action details when Ollama
-                   is unreachable (e.g. `ollama serve` not running).
 
-    OEM constraints are retrieved via keyword-ranked search over OEM_MANUAL_CHUNKS
-    in Snowflake (no Cortex Search required).
-
-    Priority / action classification mirrors execute_detection/investigative_agent.py.
+def ask_investigative_agent(question: str, context: dict, status=None) -> str:
+    """
+    Hybrid Agent Router:
+    1. Uses local Ollama to classify intent (Data vs Manual).
+    2. If Data -> Calls Cortex Analyst REST API for Text-to-SQL.
+    3. If Manual -> Uses OEM_MANUAL_CHUNKS and Ollama for unstructured RAG.
     """
     rul = context.get("rul", "Unknown")
+
+    # ── ROUTER: Classify Intent ──
+    if status:
+        status.write("🧠 **Ollama:** Classifying request intent...")
+    try:
+        intent_prompt = f"Classify the following question as either 'DATA' (asking for historical metrics, averages, trends, records) or 'MANUAL' (asking for root causes, troubleshooting, operating limits, instructions). Answer with exactly one word. Question: {question}"
+        intent_classification = _ask_via_ollama(intent_prompt).strip().upper()
+    except Exception as exc:
+        intent_classification = "MANUAL" # Fallback if Ollama is down
+
+    if status:
+        status.write(f"🔀 **Router:** Intent classified as `{intent_classification}`")
+
+    if "DATA" in intent_classification:
+        return _query_cortex_analyst(question, context, status=status)
+
+    # ── UNSTRUCTURED RAG (Original Flow) ──
+    if status:
+        status.write("🔍 **Cortex Search:** Retrieving OEM manuals...")
 
     # 1. Retrieve OEM constraints using "investigation" intent
     oem_constraints = _retrieve_oem_constraints(context.get("equipment_id", ""))
@@ -291,6 +333,9 @@ Quote the actual limits and RUL from the investigation data above.
 Answer in plain, actionable language referencing the OEM limits and RUL when relevant."""
 
     # 4. Try local Ollama first
+    if status:
+        status.write("🤖 **Ollama:** Generating final troubleshooting answer...")
+        
     ollama_error: str = ""
     try:
         return _ask_via_ollama(prompt)
@@ -299,7 +344,7 @@ Answer in plain, actionable language referencing the OEM limits and RUL when rel
 
     # 5. Hard fallback — structured summary when Ollama is unreachable
     error_detail = (
-        f"\n\n> ⚠️ **Ollama error:** `{ollama_error}`\n"
+        f"\n\n> ⚠️ **Ollama error:** Please check logs for details.\n"
         f"> Make sure Ollama is running: `ollama serve`\n"
         f"> Model in use: `{DEFAULT_MODEL}` (override with `OLLAMA_MODEL` in `.env`)\n"
         f"> Ollama host: `{OLLAMA_HOST}` (override with `OLLAMA_HOST` in `.env`)"

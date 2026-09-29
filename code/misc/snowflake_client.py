@@ -15,10 +15,7 @@ db_account = os.getenv("SNOWFLAKE_ACCOUNT")
 WAREHOUSE = "COMPUTE_WH"
 DATABASE = "OEE_COMMAND_CENTER"
 SCHEMA = "FACTORY_FLOOR"
-SEARCH_SERVICE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.OEM_MANUAL_SEARCH"
-
 SEARCH_LIMIT = 5
-SEARCH_COLUMNS = ["FILE_NAME", "CHUNK_INDEX", "CHUNK_TEXT"]
 
 CHUNK_TABLE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.OEM_MANUAL_CHUNKS"
 
@@ -35,26 +32,22 @@ STOP_WORDS = {
 
 TELEMETRY_TABLE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.IT_OT_CONVERGED"
 
-# Snowflake columns mapped to the names the detection scripts expect
-TELEMETRY_COLUMNS = {
-    "TIMESTAMP": "Timestamp",
-    "EQUIPMENT_ID": "Equipment",
-    "TEMPERATURE_C": "Temperature",
-    "VIBRATION_RMS": "Vibration"
-}
+BATCH_TABLE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.RAW_IT_BATCHES"
 
 # Used when Snowflake or Cortex Search is unreachable
 FALLBACK_OEM_EVIDENCE = {
-    "source": "LINE-2-PACKAGING OEM Maintenance Manual",
+    "source": "LINE-2-PACKAGING OEM Maintenance Manual (Degraded Local Heuristic)",
+    "STATUS": "DEGRADED_LOCAL_HEURISTIC",
+    "status": "DEGRADED_LOCAL_HEURISTIC",
     "evidence": [
         {
             "parameter": "temperature",
-            "limit": 85.0,
+            "limit": 90.0,
             "unit": "°C"
         },
         {
             "parameter": "vibration",
-            "limit": 7.5,
+            "limit": 2.3,
             "unit": "mm/s"
         }
     ]
@@ -72,75 +65,6 @@ def get_connection():
         warehouse=WAREHOUSE,
         database=DATABASE,
         schema=SCHEMA
-    )
-
-
-def search_documents(conn, user_query, limit=SEARCH_LIMIT):
-    """
-    Run a Cortex Search query over the OEM manual chunks.
-
-    The payload is inlined as a SQL literal because the connector
-    wraps bound parameters in TO_CHAR, which PARSE_JSON rejects.
-    """
-    cursor = conn.cursor()
-
-    try:
-        payload = json.dumps({
-            "query": user_query,
-            "columns": SEARCH_COLUMNS,
-            "limit": limit
-        })
-
-        sql = f"""
-        SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
-            '{SEARCH_SERVICE}',
-            PARSE_JSON('{payload}')
-        ) AS SEARCH_RESULTS
-        """
-
-        cursor.execute(sql)
-
-        result = cursor.fetchone()
-
-        if result:
-            return result[0]
-
-        return None
-
-    finally:
-        cursor.close()
-
-
-# Per-purpose search vocabulary, so each caller asks a different
-# question of the manual while the query format stays in one place
-SEARCH_INTENTS = {
-    "threshold": (
-        "operating limit threshold maximum temperature "
-        "vibration remaining useful life maintenance alert"
-    ),
-    "investigation": (
-        "operating limit threshold maximum temperature vibration "
-        "symptom root cause error corrective action"
-    )
-}
-
-
-def build_query(equipment_id, intent):
-    """
-    Build a manual search query for one purpose.
-
-    intent: "threshold" to read the limits, "investigation" to read
-            the symptoms and root causes behind them
-    """
-    if intent not in SEARCH_INTENTS:
-        raise ValueError(
-            f"Unknown intent {intent!r}, "
-            f"expected one of {sorted(SEARCH_INTENTS)}"
-        )
-
-    return (
-        f"OEM operating limits for {equipment_id}, "
-        f"{SEARCH_INTENTS[intent]}"
     )
 
 

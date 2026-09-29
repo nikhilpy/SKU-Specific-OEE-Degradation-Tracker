@@ -63,4 +63,27 @@ Return your response as JSON matching the shape below.
 </OUTPUT FORMAT>
 """
 
-    return ask_json(prompt)
+    try:
+        result = ask_json(prompt)
+        if isinstance(result, dict):
+            if "STATUS" not in result and "STATUS" in investigation:
+                result["STATUS"] = investigation["STATUS"]
+            return result
+    except Exception as exc:
+        print(f"[Agent] future_prediction LLM call failed ({exc}). Using deterministic fallback.")
+
+    return {
+        "assessment": f"Degradation alert for {investigation.get('equipment_id', 'Unknown')}. RUL {investigation.get('rul_hours', 0):.2f}h.",
+        "possible_causes": [
+            "Thermal or mechanical stress exceeding operational limits",
+            "Component wear during active production run"
+        ],
+        "recommended_checks": [
+            "Calibrate temperature and vibration sensors",
+            "Inspect drive assembly and bearing lubrication"
+        ],
+        "action": investigation.get("action", "IMMEDIATE_MAINTENANCE"),
+        "priority": investigation.get("priority", "CRITICAL"),
+        "reasoning": investigation.get("justification") or f"Evaluation based on RUL ({investigation.get('rul_hours', 0)}h).",
+        "STATUS": investigation.get("STATUS", "DEGRADED_LOCAL_HEURISTIC")
+    }

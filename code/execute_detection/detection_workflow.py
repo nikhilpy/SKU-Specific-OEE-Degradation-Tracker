@@ -12,16 +12,19 @@ from prediction import predict
 from future_prediction import future_prediction
 
 
-def run_workflow():
+def run_workflow(equipment_id="LINE-2-PACKAGING"):
 
-    prediction = predict()
+    prediction = predict(equipment_id)
 
     if not prediction["failure_flag"]:
         return prediction
 
+    parts = prediction['equipment_id'].split("-")
+    equipment_type = parts[-1] if len(parts) > 1 else prediction['equipment_id']
+
     query = (
         f"OEM operating limits for "
-        f"{prediction['equipment_id']}, "
+        f"{equipment_type} equipment, "
         f"temperature and vibration"
     )
 

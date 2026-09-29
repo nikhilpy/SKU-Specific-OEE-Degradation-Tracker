@@ -8,7 +8,7 @@ load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
-DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 
 REQUEST_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 

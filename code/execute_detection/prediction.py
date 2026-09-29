@@ -5,27 +5,22 @@ import re
 import sys
 
 import pandas as pd
-from datetime import datetime, timedelta
 
 CODE_ROOT = os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
 )
 
-for path in (CODE_ROOT, os.path.join(CODE_ROOT, "misc")):
+for path in (CODE_ROOT, os.path.join(CODE_ROOT, "misc"), os.path.dirname(os.path.abspath(__file__))):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from schemas import DiagnosticState
 from llm_setup.llm import ask_json
-from snowflake_client import (TELEMETRY_TABLE, get_df, search_oem_manual)
 
-PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
-
-# Used when the OEM manual yields no usable limits
+# Used when the OEM manual yields no usable limits (OEM Hard Caps)
 DEFAULT_THRESHOLDS = {
-    "temperature_limit": 85.0,
-    "vibration_limit": 7.5,
+    "temperature_limit": 90.0,
+    "vibration_limit": 2.3,
     "failure_threshold_hours": 24.0
 }
 
@@ -105,14 +100,20 @@ Return JSON with exactly these keys:
     return thresholds
 
 
-def predict(equipment_id="LINE-2-PACKAGING"):
+def predict(equipment_id="LINE-2-PACKAGING", data_provider=None):
+    if data_provider is None:
+        from data_provider import SnowflakeDataProvider
+        data_provider = SnowflakeDataProvider()
+
+    parts = equipment_id.split("-")
+    equipment_type = parts[-1] if len(parts) > 1 else equipment_id
 
     query = (
-        f"OEM operating limits for {equipment_id}, "
+        f"OEM operating limits for {equipment_type} equipment, "
         f"temperature, vibration and failure threshold"
     )
 
-    retrieved = search_oem_manual(query)
+    retrieved = data_provider.search_oem_manual(query)
 
     thresholds = get_threshold(retrieved)
 
@@ -123,29 +124,7 @@ def predict(equipment_id="LINE-2-PACKAGING"):
     # -----------------------------
     # Load device telemetry
     # -----------------------------
-    df = get_df(f"""
-    SELECT
-        "TIMESTAMP" AS "Timestamp",
-        "EQUIPMENT_ID" AS "Equipment",
-        "TEMPERATURE_C" AS "Temperature",
-        "VIBRATION_RMS" AS "Vibration"
-    FROM {TELEMETRY_TABLE}
-    WHERE "EQUIPMENT_ID" = '{equipment_id}'
-    ORDER BY "TIMESTAMP" DESC
-    LIMIT 100
-""")
-    # PROJECT_ROOT = os.path.dirname(
-    #     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # )
-    # CSV_FILE = os.path.join(PROJECT_ROOT, "data", "device_data.csv")
-    # df = pd.read_csv(CSV_FILE)
-
-    # if df.empty:
-    #     raise ValueError(
-    #         "IT_OT_CONVERGED returned no telemetry rows"
-    #     )
-
-    # df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M")
+    df = data_provider.get_recent_telemetry(equipment_id)
 
     df = df.sort_values("Timestamp").reset_index(drop=True)
 
@@ -237,6 +216,24 @@ def predict(equipment_id="LINE-2-PACKAGING"):
     # Output
     # -----------------------------
 
+    current_val = float(current_temperature if limiting_parameter == "temperature" else current_vibration)
+    dynamic_threshold = float(TEMPERATURE_LIMIT if limiting_parameter == "temperature" else VIBRATION_LIMIT)
+    pipeline_status = (
+        "DEGRADED_LOCAL_HEURISTIC"
+        if not retrieved or not retrieved.get("chunks") or retrieved.get("STATUS") == "DEGRADED_LOCAL_HEURISTIC"
+        else "OPTIMAL_RETRIEVAL"
+    )
+
+    diagnostic_state = DiagnosticState(
+        equipment_id=str(equipment),
+        metric=limiting_parameter,
+        current_val=current_val,
+        dynamic_threshold=dynamic_threshold,
+        rul_hours=float(rul_hours) if math.isfinite(rul_hours) else 999.0,
+        failure_flag=threshold_exceeded,
+        confidence_score=0.95 if threshold_exceeded else 0.85,
+    )
+
     if threshold_exceeded:
         result = {
             "failure_flag": True,
@@ -247,17 +244,27 @@ def predict(equipment_id="LINE-2-PACKAGING"):
                     f"Predicted RUL ({rul_hours} hours) is below "
                     f"the {FAILURE_THRESHOLD_HOURS}-hour threshold."
                 ),
-            "next_agent": "investigative_agent"
-            }
+            "next_agent": "investigative_agent",
+            "STATUS": pipeline_status,
+            "metric": limiting_parameter,
+            "current_val": current_val,
+            "dynamic_threshold": dynamic_threshold,
+            "diagnostic_state": diagnostic_state.model_dump(),
+        }
     else:
         result = {
-                "failure_flag": False,
-                "equipment_id": equipment,
-                "rul_hours": rul_hours,
-                "predicted_failure_time": predicted_failure_time,
-                "reason": "Equipment is currently above the failure threshold.",
-                "next_agent": None
-            }
+            "failure_flag": False,
+            "equipment_id": equipment,
+            "rul_hours": rul_hours,
+            "predicted_failure_time": predicted_failure_time,
+            "reason": "Equipment is currently above the failure threshold.",
+            "next_agent": None,
+            "STATUS": pipeline_status,
+            "metric": limiting_parameter,
+            "current_val": current_val,
+            "dynamic_threshold": dynamic_threshold,
+            "diagnostic_state": diagnostic_state.model_dump(),
+        }
 
     print("\n===== PREDICTION AGENT =====")
 
