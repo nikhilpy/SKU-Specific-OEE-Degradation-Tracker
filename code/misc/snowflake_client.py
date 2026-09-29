@@ -126,7 +126,7 @@ def search_oem_manual(query, limit=SEARCH_LIMIT):
             cursor.execute(sql)
 
             rows = cursor.fetchall()
-
+            
         finally:
             cursor.close()
 
