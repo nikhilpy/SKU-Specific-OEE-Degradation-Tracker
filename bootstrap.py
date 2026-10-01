@@ -156,24 +156,6 @@ def setup():
 
     print_color("\nSetup complete!", Colors.OKGREEN)
     
-    # 6. Prompt to run tests
-    while True:
-        try:
-            run_tests = input("Do you want to run the test suite to verify the setup? (y/n): ").strip().lower()
-            if run_tests == 'y':
-                print_color("Running tests...", Colors.OKCYAN)
-                # Using python -m pytest to ensure it runs in the virtualenv context correctly
-                run_command([python_exe, '-m', 'pytest', 'tests/', '-v'], "Tests failed.")
-                break
-            elif run_tests == 'n':
-                print_color("Skipping tests.", Colors.OKCYAN)
-                break
-            else:
-                print("Please enter 'y' or 'n'.")
-        except (KeyboardInterrupt, EOFError):
-            print("\nExiting.")
-            return
-
     # 7. Prompt the user to start the app
     while True:
         try:
