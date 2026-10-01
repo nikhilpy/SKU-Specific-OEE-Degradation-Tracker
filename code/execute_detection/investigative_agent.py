@@ -1,16 +1,3 @@
-"""
-investigative_agent.py — CoCo Execution Agent with Enterprise Guardrails (Pydantic v2 & MCP)
-
-Implements:
-1. Pydantic v2 schema defense via DiagnosticState, OEMValidation, and MitigationDecision.
-2. Defensive LLM parsing: Wraps LLM response validation in try/except.
-   If invalid JSON or hallucinated fields occur, falls back gracefully to
-   deterministic rule-based evaluation using OEM manual hard caps (90°C temp, 2.3 mm/s vibration).
-3. Degraded mode resilience: Never crashes on missing Cortex Search chunks;
-   returns explicit status STATUS = 'DEGRADED_LOCAL_HEURISTIC'.
-4. Autonomous Slack tool execution via MCP (@modelcontextprotocol/server-slack).
-"""
-
 import asyncio
 import concurrent.futures
 import json
@@ -49,9 +36,18 @@ OEM_HARD_CAP_VIBRATION = 2.3     # 2.3 mm/s
 # ── Execution Agent system prompt ─────────────────────────────────────────────
 EXECUTION_AGENT_SYSTEM_PROMPT = (
     "You are an Execution Agent. "
-    "Use the slack_post_message tool to send a mitigation alert to the "
+    "Use the slack_post_message tool to send a comprehensive mitigation alert to the "
     "#oee-production-alerts channel. "
-    "The message must include the Equipment ID, Predicted RUL, and OEM Constraints."
+    "You MUST format the message EXACTLY following this Slack markdown template (use single asterisks * for bolding, NO double asterisks, NO hashes):\n\n"
+    "🚨 *Mitigation Alert: Equipment Failure Detected*\n\n"
+    "*Equipment ID*: <id>\n"
+    "*Active SKU*: <sku>\n"
+    "*Predicted RUL*: <rul> hours\n"
+    "*Priority*: <priority>\n"
+    "*Recommended Action*: <action>\n"
+    "*Current Telemetry*: Temp=<temp> C, Vibration=<vib> mm/s\n"
+    "*Justification/Cause*: <cause>\n"
+    "*OEM Constraints*: <constraints>"
 )
 
 # Tool definition exposed to Ollama for autonomous tool-calling
@@ -109,24 +105,32 @@ def get_latest_telemetry(equipment_id: str, data_provider) -> dict:
     return {"temperature": None, "vibration": None, "sku": None}
 
 
-def _oem_to_text(oem_evidence) -> str:
-    """Flatten the OEM evidence dict/string to a concise plain-text constraint."""
-    if not oem_evidence:
-        return f"Max Sustained Temp: {OEM_HARD_CAP_TEMP}°C, Max Vibration: {OEM_HARD_CAP_VIBRATION} mm/s (OEM Hard Caps)"
-
+def _oem_to_text(oem_evidence, dynamic_temp_cap=OEM_HARD_CAP_TEMP, dynamic_vib_cap=OEM_HARD_CAP_VIBRATION) -> str:
+    """Flatten the OEM evidence dict/string to a concise plain-text constraint without raw LaTeX chunks."""
+    source = "OEM Hard Caps"
+    
     if isinstance(oem_evidence, dict):
-        if "chunks" in oem_evidence and oem_evidence["chunks"]:
-            top = oem_evidence["chunks"][:1]
-            snippet = " | ".join(c.get("text", "")[:200] for c in top)
-            return snippet or "See OEM Manual"
-        if "evidence" in oem_evidence and oem_evidence["evidence"]:
-            parts = [
-                f"Max {e['parameter'].title()}: {e['limit']} {e['unit']}"
-                for e in oem_evidence.get("evidence", [])
-            ]
-            return ", ".join(parts)
-
-    return str(oem_evidence)[:200]
+        chunks = oem_evidence.get("chunks", [])
+        if chunks:
+            import re
+            best_chunk = chunks[0]
+            file_name = best_chunk.get("file_name", "OEM Manual")
+            chunk_idx = best_chunk.get("chunk_index", 0)
+            page_approx = (chunk_idx // 2) + 1
+            
+            # Clean LaTeX from chunk text to provide a search snippet
+            raw_text = best_chunk.get("text", "")
+            clean_text = re.sub(r'\$.*?\$', '', raw_text)
+            clean_text = re.sub(r'\\[a-zA-Z]+\{.*?\}', '', clean_text)
+            clean_text = clean_text.replace('^', '').replace('{', '').replace('}', '').strip()
+            
+            snippet = f'"{clean_text[:80]}..."' if clean_text else ""
+            
+            source = f"{file_name}, Page ~{page_approx} (Look for: {snippet})"
+        else:
+            source = oem_evidence.get("source", "OEM Manual")
+        
+    return f"Maximum allowed Temperature is {dynamic_temp_cap} °C and Maximum allowed Vibration is {dynamic_vib_cap} mm/s.\n*Reference*: {source}"
 
 
 # ── Defensive OEM Validation & Cortex Chunk Handling ──────────────────────────
@@ -140,13 +144,15 @@ def validate_oem_evidence(
     Validate OEM manual search chunks with Pydantic OEMValidation.
     If Cortex Search chunks are missing, returns OEMValidation with status
     'DEGRADED_LOCAL_HEURISTIC' and falls back to OEM hard caps (90°C, 2.3 mm/s).
-    Never crashes on missing chunks.
     """
     chunks_found = False
     citation_source = "OEM_MANUAL_CHUNKS"
     status = "OPTIMAL_RETRIEVAL"
-    max_temp = OEM_HARD_CAP_TEMP
-    max_vib = OEM_HARD_CAP_VIBRATION
+    
+    # We will use the dynamically fetched caps as the defaults
+    # but the logic below can still extract from evidence if available.
+    max_temp = getattr(validate_oem_evidence, 'dynamic_temp_cap', OEM_HARD_CAP_TEMP)
+    max_vib = getattr(validate_oem_evidence, 'dynamic_vib_cap', OEM_HARD_CAP_VIBRATION)
 
     if isinstance(oem_evidence, dict):
         chunks = oem_evidence.get("chunks", [])
@@ -157,12 +163,12 @@ def validate_oem_evidence(
                 param = ev.get("parameter", "").lower()
                 if "temp" in param:
                     try:
-                        max_temp = float(ev.get("limit", OEM_HARD_CAP_TEMP))
+                        max_temp = float(ev.get("limit", max_temp))
                     except (ValueError, TypeError):
                         pass
                 elif "vib" in param:
                     try:
-                        max_vib = float(ev.get("limit", OEM_HARD_CAP_VIBRATION))
+                        max_vib = float(ev.get("limit", max_vib))
                     except (ValueError, TypeError):
                         pass
         else:
@@ -199,16 +205,18 @@ def deterministic_rule_evaluation(
     rul_hours: float,
     current_temp: float | None = None,
     current_vibration: float | None = None,
+    dynamic_temp_cap: float = 90.0,
+    dynamic_vib_cap: float = 2.3,
 ) -> MitigationDecision:
     """
-    Deterministic rule-based evaluation using the OEM manual hard caps (90 C temp, 2.3 vibration).
+    Deterministic rule-based evaluation using the OEM manual hard caps.
     Enforces enterprise guardrail fallback when LLM parsing fails or produces hallucinated fields.
     """
     breaches = []
-    if current_temp is not None and current_temp >= OEM_HARD_CAP_TEMP:
-        breaches.append(f"Temperature {current_temp:.1f}°C >= {OEM_HARD_CAP_TEMP}°C hard cap")
-    if current_vibration is not None and current_vibration >= OEM_HARD_CAP_VIBRATION:
-        breaches.append(f"Vibration {current_vibration:.2f} mm/s >= {OEM_HARD_CAP_VIBRATION} mm/s hard cap")
+    if current_temp is not None and current_temp >= dynamic_temp_cap:
+        breaches.append(f"Temperature {current_temp:.1f}°C >= {dynamic_temp_cap}°C hard cap")
+    if current_vibration is not None and current_vibration >= dynamic_vib_cap:
+        breaches.append(f"Vibration {current_vibration:.2f} mm/s >= {dynamic_vib_cap} mm/s hard cap")
 
     if rul_hours <= 6.0 or breaches:
         priority = "CRITICAL"
@@ -216,7 +224,7 @@ def deterministic_rule_evaluation(
         detail = "; ".join(breaches) if breaches else f"RUL ({rul_hours:.2f}h) <= 6.0h critical threshold"
         justification = (
             f"[Deterministic OEM Hard Cap Fallback] Equipment {equipment_id} safety threshold exceeded: "
-            f"{detail}. Hard caps: {OEM_HARD_CAP_TEMP}°C, {OEM_HARD_CAP_VIBRATION} mm/s."
+            f"{detail}. Hard caps: {dynamic_temp_cap}°C, {dynamic_vib_cap} mm/s."
         )
     elif rul_hours <= 24.0:
         priority = "HIGH"
@@ -251,24 +259,22 @@ def parse_and_validate_llm_mitigation(
     current_temp: float | None,
     current_vibration: float | None,
     oem_text: str,
+    dynamic_temp_cap: float = 90.0,
+    dynamic_vib_cap: float = 2.3,
 ) -> MitigationDecision:
     """
     Query the LLM to assess mitigation priority and action, wrapping parsing
     in a try/except validator using Pydantic (MitigationDecision).
-
-    If the LLM produces invalid JSON or hallucinates non-existent fields (caught by
-    extra='forbid'), it falls back gracefully to deterministic rule-based evaluation
-    using OEM manual hard caps (90 C temp, 2.3 vibration).
     """
     prompt = f"""You are a Manufacturing Reliability AI Agent. Analyze this failure incident and output a mitigation decision JSON.
 
 <Incident Context>
 Equipment ID: {equipment_id}
 Active SKU: {sku or 'UNKNOWN'}
-Predicted RUL: {rul_hours:.2f} hours
-Telemetry: Temp={current_temp if current_temp is not None else 'Unknown'}°C, Vibration={current_vibration if current_vibration is not None else 'Unknown'} mm/s
+Predicted RUL: {round(rul_hours, 2)} hours
+Telemetry: Temp={current_temp if current_temp is not None else 'Unknown'} C, Vibration={current_vibration if current_vibration is not None else 'Unknown'} mm/s
 OEM Constraints: {oem_text}
-OEM Hard Caps: 90°C Temperature, 2.3 mm/s Vibration
+OEM Hard Caps: {round(dynamic_temp_cap, 1)} C Temperature, {round(dynamic_vib_cap, 1)} mm/s Vibration
 </Incident Context>
 
 Respond ONLY with a JSON object containing EXACTLY these keys:
@@ -279,27 +285,10 @@ Respond ONLY with a JSON object containing EXACTLY these keys:
 - "approved_for_dispatch": boolean (true if alert should be dispatched)
 """
     try:
-        body = {
-            "model": DEFAULT_MODEL,
-            "messages": [
-                {"role": "system", "content": "You are a deterministic reliability engineering assistant. Output JSON only."},
-                {"role": "user", "content": prompt}
-            ],
-            "format": "json",
-            "stream": False,
-            "options": {"temperature": 0.1},
-        }
-        req = urllib.request.Request(
-            f"{OLLAMA_HOST}/api/chat",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            content = data.get("message", {}).get("content", "")
-
-        parsed_dict = json.loads(content)
+        from llm import ask_json
+        
+        full_prompt = f"You are a deterministic reliability engineering assistant. Output JSON only.\n\n{prompt}"
+        parsed_dict = ask_json(full_prompt, temperature=0.1)
         # Strict validation with extra='forbid' catches hallucinated non-existent fields
         validated_decision = MitigationDecision.model_validate(parsed_dict)
         print(f"[Agent] Guardrail check PASSED: Validated LLM decision ({validated_decision.priority} | {validated_decision.action})")
@@ -307,13 +296,15 @@ Respond ONLY with a JSON object containing EXACTLY these keys:
 
     except (ValidationError, json.JSONDecodeError, KeyError, Exception) as exc:
         print(f"[Guardrail Alert] LLM parsing/schema error: {exc}")
-        print(f"[Guardrail Alert] Falling back to deterministic rule-based evaluation using OEM hard caps (90°C, 2.3 mm/s).")
+        print(f"[Guardrail Alert] Falling back to deterministic rule-based evaluation using OEM hard caps ({dynamic_temp_cap}°C, {dynamic_vib_cap} mm/s).")
         return deterministic_rule_evaluation(
             equipment_id=equipment_id,
             sku=sku,
             rul_hours=rul_hours,
             current_temp=current_temp,
             current_vibration=current_vibration,
+            dynamic_temp_cap=dynamic_temp_cap,
+            dynamic_vib_cap=dynamic_vib_cap,
         )
 
 
@@ -372,6 +363,9 @@ def _run_execution_agent(context: dict) -> dict:
     sku          = context.get("sku") or "UNKNOWN"
     priority     = context["priority"]
     action       = context["action"]
+    justification = context.get("justification", "Not provided")
+    current_temp = context.get("current_temp", "Unknown")
+    current_vib  = context.get("current_vib", "Unknown")
     oem_text     = _oem_to_text(context.get("oem_evidence"))
     channel      = os.getenv("SLACK_CHANNEL", "#oee-production-alerts")
 
@@ -383,8 +377,11 @@ def _run_execution_agent(context: dict) -> dict:
         f"- Predicted Remaining Useful Life (RUL): {rul_hours:.2f} hours\n"
         f"- Priority: {priority}\n"
         f"- Recommended Action: {action}\n"
+        f"- Current Telemetry: Temp={current_temp} C, Vibration={current_vib} mm/s\n"
+        f"- Justification/Cause: {justification}\n"
         f"- OEM Constraints: {oem_text}\n\n"
-        f"Send a mitigation alert to {channel} now."
+        f"Send a highly detailed mitigation alert to {channel} now. "
+        f"Make sure the message contains all the detailed information above, formatted clearly."
     )
 
     print("\n===== EXECUTION AGENT (MCP Mode) =====")
@@ -393,25 +390,13 @@ def _run_execution_agent(context: dict) -> dict:
 
     tool_args: dict | None = None
     try:
-        body = {
-            "model":   DEFAULT_MODEL,
-            "messages": [
-                {"role": "system", "content": EXECUTION_AGENT_SYSTEM_PROMPT},
-                {"role": "user",   "content": user_message},
-            ],
-            "tools":  [_SLACK_TOOL_SCHEMA],
-            "stream": False,
-        }
-        req = urllib.request.Request(
-            f"{OLLAMA_HOST}/api/chat",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            payload = json.loads(resp.read())
-
-        tool_calls = payload.get("message", {}).get("tool_calls", [])
+        from llm import chat_with_tools
+        messages = [
+            {"role": "system", "content": EXECUTION_AGENT_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ]
+        
+        tool_calls = chat_with_tools(messages, [_SLACK_TOOL_SCHEMA])
         if tool_calls:
             fn        = tool_calls[0].get("function", {})
             raw_args  = fn.get("arguments", {})
@@ -419,11 +404,11 @@ def _run_execution_agent(context: dict) -> dict:
                 tool_args = json.loads(raw_args)
             elif isinstance(raw_args, dict):
                 tool_args = raw_args
-            print(f"[Agent] Ollama issued tool call → slack_post_message")
+            print(f"[Agent] LLM issued tool call → slack_post_message")
             print(f"[Agent] Channel: {tool_args.get('channel_id')} | Message composed ✓")
 
     except Exception as exc:
-        print(f"[Agent] Ollama tool-calling unavailable ({exc}). Composing alert directly.")
+        print(f"[Agent] LLM tool-calling unavailable ({exc}). Composing alert directly.")
 
     if not tool_args:
         fallback_text = (
@@ -432,6 +417,8 @@ def _run_execution_agent(context: dict) -> dict:
             f"*Active SKU*: {sku}\n"
             f"*Predicted RUL*: {rul_hours:.2f} hours\n"
             f"*Priority*: {priority}  |  *Action*: {action}\n"
+            f"*Telemetry*: Temp={current_temp} C, Vibration={current_vib} mm/s\n"
+            f"*Justification*: {justification}\n"
             f"*OEM Constraints*: {oem_text}\n"
             f"*ACTION REQUIRED*: Initiate "
             f"{action.replace('_', ' ').title()} immediately."
@@ -506,12 +493,28 @@ def investigate(diagnosis: dict | DiagnosticState, oem_evidence=None, data_provi
 
     if data_provider is None:
         data_provider = SnowflakeDataProvider()
+        
+    dynamic_temp_cap = OEM_HARD_CAP_TEMP
+    dynamic_vib_cap = OEM_HARD_CAP_VIBRATION
+    try:
+        if hasattr(data_provider, '_get_df'):
+            df = data_provider._get_df("SELECT COALESCE(MAX(MAX_TEMP_LIMIT), 90.0) AS T, COALESCE(MAX(MAX_VIBRATION_LIMIT), 2.3) AS V FROM OEM_EQUIPMENT_THRESHOLDS")
+            if not df.empty:
+                dynamic_temp_cap = float(df.iloc[0]['T'])
+                dynamic_vib_cap = float(df.iloc[0]['V'])
+    except Exception:
+        pass
 
     # 1. Telemetry and Active SKU
     telemetry = get_latest_telemetry(equipment_id, data_provider)
     sku = diag_dict.get("sku") or telemetry.get("sku") or get_active_sku(equipment_id, data_provider) or "UNKNOWN"
-    current_temp = diag_dict.get("current_val") if diag_dict.get("metric") == "temperature" else telemetry.get("temperature")
-    current_vib = diag_dict.get("current_val") if diag_dict.get("metric") == "vibration" else telemetry.get("vibration")
+    current_temp = diag_dict.get("temperature")
+    if current_temp is None:
+        current_temp = diag_dict.get("current_val") if diag_dict.get("metric") == "temperature" else telemetry.get("temperature")
+        
+    current_vib = diag_dict.get("vibration")
+    if current_vib is None:
+        current_vib = diag_dict.get("current_val") if diag_dict.get("metric") == "vibration" else telemetry.get("vibration")
 
     # 2. OEM Manual Retrieval (never crash on missing Cortex search chunks)
     if oem_evidence is None:
@@ -524,6 +527,9 @@ def investigate(diagnosis: dict | DiagnosticState, oem_evidence=None, data_provi
             oem_evidence = FALLBACK_OEM_EVIDENCE
 
     # 3. Guardrail Schema Defense: Validate OEM Evidence Chunks
+    # Monkey-patch dynamic caps for the validate_oem_evidence function
+    validate_oem_evidence.dynamic_temp_cap = dynamic_temp_cap
+    validate_oem_evidence.dynamic_vib_cap = dynamic_vib_cap
     oem_validation, oem_status = validate_oem_evidence(
         oem_evidence,
         current_temp=current_temp,
@@ -537,7 +543,9 @@ def investigate(diagnosis: dict | DiagnosticState, oem_evidence=None, data_provi
         rul_hours=rul,
         current_temp=current_temp,
         current_vibration=current_vib,
-        oem_text=_oem_to_text(oem_evidence),
+        oem_text=_oem_to_text(oem_evidence, dynamic_temp_cap, dynamic_vib_cap),
+        dynamic_temp_cap=dynamic_temp_cap,
+        dynamic_vib_cap=dynamic_vib_cap,
     )
 
     # 5. Dispatch Mitigation Alert via MCP
@@ -548,6 +556,9 @@ def investigate(diagnosis: dict | DiagnosticState, oem_evidence=None, data_provi
         "predicted_failure_time": diag_dict.get("predicted_failure_time", ""),
         "priority":              decision.priority,
         "action":                decision.action,
+        "justification":         diag_dict.get("reason", decision.justification),
+        "current_temp":          current_temp,
+        "current_vib":           current_vib,
         "oem_evidence":          oem_evidence,
     })
 

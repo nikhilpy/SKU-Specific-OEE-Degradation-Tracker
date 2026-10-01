@@ -12,7 +12,11 @@ _EXEC_DETECTION_PATH = os.path.join(
 if _EXEC_DETECTION_PATH not in sys.path:
     sys.path.insert(0, _EXEC_DETECTION_PATH)
 
+import importlib
 from investigative_agent import investigate  # noqa: E402  (CoCo Execution Agent)
+import investigative_agent
+importlib.reload(investigative_agent)
+
 from agent_stub import ask_investigative_agent, _retrieve_oem_constraints, _classify_priority, _ask_via_ollama
 import json
 from snowflake_conn import get_active_session
@@ -110,9 +114,23 @@ _PRIORITY_COLOUR = {"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "gold"}
 badge_colour = _PRIORITY_COLOUR.get(priority, "grey")
 
 st.subheader(f"Investigating {equip_id} (Triggered by SKU: {triggering_sku})")
+
+try:
+    rul_float = float(rul)
+    hours = int(rul_float)
+    minutes = int(round((rul_float - hours) * 60))
+    if hours > 0 and minutes > 0:
+        rul_display = f"{hours} hour{'s' if hours != 1 else ''} and {minutes} minute{'s' if minutes != 1 else ''}"
+    elif hours > 0:
+        rul_display = f"{hours} hour{'s' if hours != 1 else ''}"
+    else:
+        rul_display = f"{minutes} minute{'s' if minutes != 1 else ''}"
+except (ValueError, TypeError):
+    rul_display = f"{rul} hours"
+
 col_l, col_r = st.columns(2)
 with col_l:
-    st.markdown(f"**Predicted Failure in:** {rul} hours")
+    st.markdown(f"**Predicted Failure in:** {rul_display}")
 with col_r:
     st.markdown(
         f"**Priority:** <span style='color:{badge_colour};font-weight:bold;'>"
@@ -124,21 +142,19 @@ st.markdown("---")
 
 # --- Suggested Questions ---
 st.markdown("### Suggested Troubleshooting Questions")
-with st.spinner("🤖 Ollama is generating troubleshooting questions..."):
+with st.spinner("🧠 Agent is generating troubleshooting questions..."):
     suggested_questions = generate_investigation_questions(equip_id, triggering_sku, rul)
 
-cols = st.columns(3)
-for i, col in enumerate(cols):
-    with col:
-        if st.button(suggested_questions[i], use_container_width=True, key=f"q_btn_{i}"):
-            st.session_state["messages"].append({"role": "user", "content": suggested_questions[i]})
+for i, question in enumerate(suggested_questions):
+    if st.button(question, use_container_width=True, key=f"q_btn_{i}"):
+        st.session_state["messages"].append({"role": "user", "content": question})
+        
+        with st.status("🧠 Agent is analyzing the request...", expanded=True) as status_box:
+            answer = ask_investigative_agent(question, context, status=status_box)
+            status_box.update(label="Analysis complete!", state="complete", expanded=False)
             
-            with st.status("🧠 Agent is analyzing the request...", expanded=True) as status_box:
-                answer = ask_investigative_agent(suggested_questions[i], context, status=status_box)
-                status_box.update(label="Analysis complete!", state="complete", expanded=False)
-                
-            st.session_state["messages"].append({"role": "assistant", "content": answer})
-            st.rerun()
+        st.session_state["messages"].append({"role": "assistant", "content": answer})
+        st.rerun()
 
 st.markdown("---")
 
@@ -153,11 +169,26 @@ col1, col2 = st.columns([1, 4])
 with col1:
     if st.button("🚨 Mitigate Impact", type="primary"):
 
+        # Try to get latest telemetry directly from Snowflake
+        current_temp, current_vib = None, None
+        try:
+            telemetry_query = f"SELECT TEMPERATURE_C, VIBRATION_RMS FROM IT_OT_CONVERGED WHERE EQUIPMENT_ID = '{equip_id}' ORDER BY TIMESTAMP DESC LIMIT 1"
+            telemetry_df = session.sql(telemetry_query).to_pandas()
+            if not telemetry_df.empty:
+                current_temp = float(telemetry_df["TEMPERATURE_C"].iloc[0])
+                current_vib = float(telemetry_df["VIBRATION_RMS"].iloc[0])
+        except Exception:
+            pass
+
         diagnosis = {
             "failure_flag":           True,
             "equipment_id":           equip_id,
+            "sku":                    triggering_sku,
             "rul_hours":              float(rul) if str(rul).replace(".", "").isdigit() else 0.0,
             "predicted_failure_time": str(datetime.datetime.now()),
+            "reason":                 context.get("predictive_cause", "Degradation alert triggered from dashboard"),
+            "temperature":            current_temp,
+            "vibration":              current_vib
         }
 
         # ── st.status() streams each agent reasoning step to the UI ──────────

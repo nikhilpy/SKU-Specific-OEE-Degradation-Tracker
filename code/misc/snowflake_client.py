@@ -36,7 +36,7 @@ BATCH_TABLE = "OEE_COMMAND_CENTER.FACTORY_FLOOR.RAW_IT_BATCHES"
 
 # Used when Snowflake or Cortex Search is unreachable
 FALLBACK_OEM_EVIDENCE = {
-    "source": "LINE-2-PACKAGING OEM Maintenance Manual (Degraded Local Heuristic)",
+    "source": "OEM_Maintenance_and_Operations_Manual (Degraded Local Heuristic)",
     "STATUS": "DEGRADED_LOCAL_HEURISTIC",
     "status": "DEGRADED_LOCAL_HEURISTIC",
     "evidence": [
@@ -54,18 +54,23 @@ FALLBACK_OEM_EVIDENCE = {
 }
 
 
+_shared_conn = None
+
 def get_connection():
     """
-    Open a connection to the OEE_COMMAND_CENTER database.
+    Return a shared connection to the OEE_COMMAND_CENTER database.
     """
-    return snowflake.connector.connect(
-        account=db_account,
-        user=db_user,
-        password=db_password,
-        warehouse=WAREHOUSE,
-        database=DATABASE,
-        schema=SCHEMA
-    )
+    global _shared_conn
+    if _shared_conn is None or _shared_conn.is_closed():
+        _shared_conn = snowflake.connector.connect(
+            account=db_account,
+            user=db_user,
+            password=db_password,
+            warehouse=WAREHOUSE,
+            database=DATABASE,
+            schema=SCHEMA
+        )
+    return _shared_conn
 
 
 def query_terms(query):
@@ -119,14 +124,10 @@ def search_oem_manual(query, limit=SEARCH_LIMIT):
 
     try:
         conn = get_connection()
-
         cursor = conn.cursor()
-
         try:
             cursor.execute(sql)
-
             rows = cursor.fetchall()
-
         finally:
             cursor.close()
 
@@ -161,12 +162,7 @@ def search_oem_manual(query, limit=SEARCH_LIMIT):
 
     except Exception as e:
         print(f"\nOEM retrieval unavailable: {e}")
-
         return FALLBACK_OEM_EVIDENCE
-
-    finally:
-        if conn:
-            conn.close()
 
 def get_df(sql, params=None):
     """
@@ -182,21 +178,16 @@ def get_df(sql, params=None):
 
     try:
         cursor = conn.cursor()
-
         try:
             cursor.execute(sql, params)
-
-            columns = [
-                column[0] for column in cursor.description
-            ]
-
+            columns = [column[0] for column in cursor.description]
             rows = cursor.fetchall()
-
         finally:
             cursor.close()
-
-    finally:
-        conn.close()
+    except Exception as e:
+        print(f"Query failed: {e}")
+        rows = []
+        columns = []
 
     if not rows:
         return pd.DataFrame(columns=columns)

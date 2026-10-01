@@ -15,7 +15,7 @@ _LLM_SETUP_PATH = os.path.join(
 if _LLM_SETUP_PATH not in sys.path:
     sys.path.insert(0, _LLM_SETUP_PATH)
 
-from llm import complete as ollama_complete, OLLAMA_HOST, DEFAULT_MODEL  # noqa: E402
+from llm import complete as ollama_complete, ask_json as ollama_ask_json, OLLAMA_HOST, DEFAULT_MODEL, LAST_USED_LLM  # noqa: E402
 
 # Resolve .env from project root (two levels up from streamlit_app/)
 _ENV_PATH = os.path.join(
@@ -72,7 +72,11 @@ _FALLBACK_OEM_TEXT = (
 # ─────────────────────────────────────────────
 
 def _get_connector_connection():
-    """Creates a raw snowflake.connector connection."""
+    """Returns the raw snowflake.connector connection from the active session cache."""
+    session = get_active_session()
+    if session:
+        return session._conn
+    
     return snowflake.connector.connect(
         account=os.getenv("SNOWFLAKE_ACCOUNT"),
         user=os.getenv("SNOWFLAKE_USER"),
@@ -143,7 +147,6 @@ def _retrieve_oem_constraints(equipment_id: str) -> str:
             rows = cursor.fetchall()
         finally:
             cursor.close()
-        conn.close()
 
         if not rows:
             return _FALLBACK_OEM_TEXT
@@ -196,6 +199,13 @@ def _ask_via_ollama(prompt: str) -> str:
     return ollama_complete(prompt)
 
 
+def _ask_json_via_ollama(prompt: str) -> dict:
+    """
+    Call the locally hosted Ollama server via llm_setup/llm.py, expecting a JSON response.
+    """
+    return ollama_ask_json(prompt)
+
+
 def _query_cortex_analyst(question: str, context: dict, status=None) -> str:
     """
     Calls the Snowflake Cortex Analyst REST API using the deployed semantic model.
@@ -232,48 +242,120 @@ def _query_cortex_analyst(question: str, context: dict, status=None) -> str:
         req.add_header('Content-Type', 'application/json')
         req.add_header('Accept', 'application/json')
         
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                result = json.loads(response.read().decode())
-                
-            messages = result.get('message', {}).get('content', [])
-            sql_query = ""
-            text_response = ""
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.loads(response.read().decode())
             
-            for msg in messages:
-                if msg.get('type') == 'sql':
-                    sql_query = msg.get('statement', '')
-                elif msg.get('type') == 'text':
-                    text_response += msg.get('text', '') + "\n"
-                    
-            if sql_query:
-                # We got SQL from Cortex Analyst, run it!
-                if status:
-                    status.write(f"📊 **Snowflake:** Executing generated SQL query:\n```sql\n{sql_query}\n```")
-                cursor = conn.cursor()
-                cursor.execute(sql_query)
-                rows = cursor.fetchmany(10)
-                columns = [col[0] for col in cursor.description] if cursor.description else []
-                cursor.close()
+        messages = result.get('message', {}).get('content', [])
+        sql_query = ""
+        text_response = ""
+        
+        for msg in messages:
+            if msg.get('type') == 'sql':
+                sql_query = msg.get('statement', '')
+            elif msg.get('type') == 'text':
+                text_response += msg.get('text', '') + "\n"
                 
-                # Use Ollama to format the data nicely
-                if status:
-                    status.write("🤖 **Ollama:** Summarizing raw database results...")
-                summary_prompt = f"You are a helpful factory assistant. The user asked: '{question}'. \nHere is the data pulled from the database:\nColumns: {columns}\nData: {rows}\n\nSummarize this data clearly for the user."
-                return _ask_via_ollama(summary_prompt)
-                
-            return text_response or "Cortex Analyst did not return a valid response."
+        if sql_query:
+            # We got SQL from Cortex Analyst, run it!
+            if status:
+                status.write(f"📊 **Snowflake:** Executing generated SQL query:\n```sql\n{sql_query}\n```")
+            cursor = conn.cursor()
+            cursor.execute(sql_query)
+            rows = cursor.fetchmany(100)
+            columns = [col[0] for col in cursor.description] if cursor.description else []
+            cursor.close()
             
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode()
-            print(f"Cortex Analyst API Error: {e.code} - {error_body}")
-            return "**Cortex Analyst API Error.** Ensure Cortex Analyst is enabled in your region and account. Check logs for details."
-        except Exception as api_err:
-            print(f"Cortex Analyst Error: {api_err}")
-            return "**Cortex Analyst Error.** Check logs for details."
+            # Use LLM to format the data nicely
+            if status:
+                status.write("🤖 **LLM:** Summarizing raw database results...")
+            summary_prompt = f"You are a helpful factory assistant. The user asked: '{question}'. \nHere is the data pulled from the database:\nColumns: {columns}\nData: {rows}\n\nSummarize this data clearly for the user."
+            answer = _ask_via_ollama(summary_prompt)
             
-    finally:
-        conn.close()
+            backend = LAST_USED_LLM.get("backend", "unknown")
+            model = LAST_USED_LLM.get("model", "unknown")
+            reason = LAST_USED_LLM.get("reason", "")
+            
+            if status:
+                if backend == "snowflake_cortex":
+                    status.write(f"❄️ **LLM Engine:** Snowflake Cortex (`{model}`) - {reason}")
+                else:
+                    status.write(f"🦙 **LLM Engine:** Local Ollama (`{model}`) - {reason}")
+            
+            llm_badge = f"\n\n---\n*Answered by: **{backend}** (`{model}`)*"
+            return answer + llm_badge
+            
+        return (text_response or "Cortex Analyst did not return a valid response.") + "\n\n---\n*Answered by: **Snowflake Cortex Analyst***"
+            
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        print(f"Cortex Analyst API Error: {e.code} - {error_body}")
+        return _fallback_analyst_llm(question, status)
+    except Exception as api_err:
+        print(f"Cortex Analyst Error: {api_err}")
+        return _fallback_analyst_llm(question, status)
+
+def _fallback_analyst_llm(question: str, status) -> str:
+    """Fallback to local LLM for Text-to-SQL when Cortex Analyst fails."""
+    if status:
+        status.write("⚠️ **Cortex Analyst failed.** Falling back to local LLM for Text-to-SQL...")
+        
+    yaml_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "semantic_models", "factory_health_ontology.yaml"
+    )
+    
+    try:
+        with open(yaml_path, 'r') as f:
+            yaml_content = f.read()
+    except Exception as e:
+        return f"**LLM Fallback Error:** Could not read semantic model. {e}"
+
+    # Prompt LLM to generate SQL
+    sql_prompt = f"""You are a Snowflake SQL expert. Given the following semantic model (YAML), generate a Snowflake SQL query to answer the user's question.
+<semantic_model>
+{yaml_content}
+</semantic_model>
+
+User Question: {question}
+
+Return ONLY the raw SQL query. Do not include markdown formatting like ```sql or any other text.
+"""
+    try:
+        sql_query = _ask_via_ollama(sql_prompt).strip()
+        # Clean up markdown if the LLM still included it
+        if sql_query.startswith("```sql"):
+            sql_query = sql_query[6:]
+        if sql_query.startswith("```"):
+            sql_query = sql_query[3:]
+        if sql_query.endswith("```"):
+            sql_query = sql_query[:-3]
+        sql_query = sql_query.strip()
+        
+        if status:
+            status.write(f"📊 **LLM Fallback:** Executing generated SQL query:\n```sql\n{sql_query}\n```")
+            
+        conn = _get_connector_connection()
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        rows = cursor.fetchmany(100)
+        columns = [col[0] for col in cursor.description] if cursor.description else []
+        cursor.close()
+        
+        # Summarize
+        if status:
+            status.write("🤖 **LLM Fallback:** Summarizing raw database results...")
+        summary_prompt = f"You are a helpful factory assistant. The user asked: '{question}'. \nHere is the data pulled from the database:\nColumns: {columns}\nData: {rows}\n\nSummarize this data clearly for the user."
+        answer = _ask_via_ollama(summary_prompt)
+        
+        backend = LAST_USED_LLM.get("backend", "unknown")
+        model = LAST_USED_LLM.get("model", "unknown")
+        reason = LAST_USED_LLM.get("reason", "Fallback")
+        llm_badge = f"\n\n---\n*Answered by: **{backend}** (`{model}`) [Fallback Text-to-SQL]*"
+        return answer + llm_badge
+        
+    except Exception as e:
+        return f"**LLM Fallback Error:** Failed to generate/execute SQL or summarize. {e}"
+
 
 
 def ask_investigative_agent(question: str, context: dict, status=None) -> str:
@@ -287,15 +369,18 @@ def ask_investigative_agent(question: str, context: dict, status=None) -> str:
 
     # ── ROUTER: Classify Intent ──
     if status:
-        status.write("🧠 **Ollama:** Classifying request intent...")
+        status.write("🧠 **LLM:** Classifying request intent...")
     try:
         intent_prompt = f"Classify the following question as either 'DATA' (asking for historical metrics, averages, trends, records) or 'MANUAL' (asking for root causes, troubleshooting, operating limits, instructions). Answer with exactly one word. Question: {question}"
         intent_classification = _ask_via_ollama(intent_prompt).strip().upper()
+        
+        backend = LAST_USED_LLM.get("backend", "unknown")
+        if status:
+            status.write(f"🧠 **Router:** Intent classified as `{intent_classification}` (via {backend})")
     except Exception as exc:
-        intent_classification = "MANUAL" # Fallback if Ollama is down
-
-    if status:
-        status.write(f"🔀 **Router:** Intent classified as `{intent_classification}`")
+        intent_classification = "MANUAL" # Fallback if LLM is down
+        if status:
+            status.write(f"🧠 **Router:** Intent classified as `{intent_classification}` (Fallback)")
 
     if "DATA" in intent_classification:
         return _query_cortex_analyst(question, context, status=status)
@@ -332,31 +417,43 @@ User Question: {question}
 Quote the actual limits and RUL from the investigation data above.
 Answer in plain, actionable language referencing the OEM limits and RUL when relevant."""
 
-    # 4. Try local Ollama first
+    # 4. Try LLM
     if status:
-        status.write("🤖 **Ollama:** Generating final troubleshooting answer...")
+        status.write("🤖 **LLM:** Generating final troubleshooting answer...")
         
-    ollama_error: str = ""
+    llm_error: str = ""
     try:
-        return _ask_via_ollama(prompt)
+        answer = _ask_via_ollama(prompt)
+        
+        backend = LAST_USED_LLM.get("backend", "unknown")
+        model = LAST_USED_LLM.get("model", "unknown")
+        reason = LAST_USED_LLM.get("reason", "")
+        
+        if status:
+            if backend == "snowflake_cortex":
+                status.write(f"❄️ **LLM Engine:** Snowflake Cortex (`{model}`) - {reason}")
+            else:
+                status.write(f"🦙 **LLM Engine:** Local Ollama (`{model}`) - {reason}")
+                
+        llm_badge = f"\n\n---\n*Answered by: **{backend}** (`{model}`)*"
+        return answer + llm_badge
     except Exception as exc:
-        ollama_error = str(exc)
+        llm_error = str(exc)
 
-    # 5. Hard fallback — structured summary when Ollama is unreachable
+    # 5. Hard fallback — structured summary when LLM is unreachable
     error_detail = (
-        f"\n\n> ⚠️ **Ollama error:** Please check logs for details.\n"
-        f"> Make sure Ollama is running: `ollama serve`\n"
-        f"> Model in use: `{DEFAULT_MODEL}` (override with `OLLAMA_MODEL` in `.env`)\n"
-        f"> Ollama host: `{OLLAMA_HOST}` (override with `OLLAMA_HOST` in `.env`)"
-    ) if ollama_error else ""
+        f"\n\n> ⚠️ **LLM error:** Please check logs for details.\n"
+        f"> LLM backend in use: `{LAST_USED_LLM.get('backend')}`\n"
+        f"> LLM fallback host: `{OLLAMA_HOST}`"
+    ) if llm_error else ""
     return (
-        f"**Backend Analysis** (Ollama LLM unavailable):\n\n"
+        f"**Backend Analysis** (LLM unavailable):\n\n"
         f"Your question: *\"{question}\"*\n\n"
         f"Based on the investigation data available:\n"
         f"- Equipment **{context.get('equipment_id')}** has **{rul} hours** of RUL.\n"
         f"- Priority: **{priority}** → Action: **{action}**\n"
         f"- OEM Limits: {oem_constraints}\n\n"
         f"The Investigative Agent could not generate a dynamic LLM answer because "
-        f"the local Ollama server is unreachable."
+        f"the LLM endpoints were unreachable."
         f"{error_detail}"
     )

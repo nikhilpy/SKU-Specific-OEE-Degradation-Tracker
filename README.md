@@ -33,7 +33,7 @@ The SKU-Specific OEE Degradation Tracker is a Snowflake CoCo-native prototype th
 | **Command Center & Action** | 4-page Streamlit app: Dashboard, Investigative Agent chat, Alerts History, Data Analyst (Cortex Analyst) |
 | **Synthetic Data** | `code/misc/data_generator.py` — referentially consistent IT/OT data with a hard-coded 15% temp / 20% vibration spike exclusive to SKU-899 |
 | **Semantic Model & Ontology** | `semantic_models/factory_health_ontology.yaml` — CoCo semantic view linking assets, batches, `PREDICTED_RUL_HOURS`, `CUMULATIVE_STRESS_SCORE` |
-| **Unstructured Processing** | `data/LINE-2-PACKAGING OEM Maintenance Manual.pdf` chunked and vectorized by Cortex Search (`sql/06-cortex.sql`) |
+| **Unstructured Processing** | `data/OEM_Maintenance_and_Operations_Manual.pdf` chunked and vectorized by Cortex Search (`sql/06-cortex.sql`) |
 | **Reusable Skill** | `skills/IT_OT_TimeSeries_Joiner.yaml` — published CoCo Skill for the time-series boundary join |
 | **Slack MCP Integration** | `@modelcontextprotocol/server-slack` spawned as a stdio subprocess; replaces legacy HTTP API calls |
 | **Autonomous Operations** | `code/execute_detection/autonomous_daemon.py` — continuous background monitor |
@@ -196,30 +196,22 @@ erDiagram
 
 ## 7. Project File Structure
 
-```
+```text
 SKU-Specific-OEE-Degradation-Tracker/
 ├── .env                              # Snowflake + Slack credentials (not committed)
 ├── requirements.txt                  # Python dependencies
-├── package.json                      # Node.js dependencies (Slack MCP server)
 ├── bootstrap.py                      # Zero-click setup: venv, pip, npm, ollama
 ├── start.bat                         # Windows launcher → runs bootstrap.py
 ├── start.sh                          # macOS/Linux launcher → runs bootstrap.py
-├── DEC.md                            # Python performance optimizer prompt
 │
 ├── data/
-│   └── LINE-2-PACKAGING OEM Maintenance Manual.pdf  # Source OEM manual for Cortex Search
+│   └── OEM_Maintenance_and_Operations_Manual.pdf  # Source OEM manual for Cortex Search
 │
 ├── sql/
-│   ├── 01-init.sql                   # Database, schema, warehouse setup
-│   ├── 02-copy.sql                   # COPY INTO staging for CSV files
-│   ├── 03-join.sql                   # Dynamic Table IT_OT_CONVERGED (BETWEEN join)
-│   ├── 04-rul.sql                    # Snowflake ML Forecast + ASSET_RUL_PREDICTIONS view
-│   ├── 04-oem.sql                    # OEM reference table setup
-│   ├── 05-parse.sql                  # Document parsing for RAG ingestion
-│   ├── 06-cortex.sql                 # Cortex Search Service (OEM_MANUAL_SEARCH)
-│   ├── 07-retrieval.sql              # Retrieval validation queries
-│   ├── 08-alerts.sql                 # ALERTS_HISTORY table DDL
-│   └── 09-semantic-models.sql        # Semantic model registration
+│   ├── 01-infrastructure.sql         # Database, schema, warehouse setup
+│   ├── 02-data-ingestion.sql         # COPY INTO staging for CSV files
+│   ├── 03-analytics.sql              # Dynamic Table IT_OT_CONVERGED (BETWEEN join)
+│   └── 04-cortex-search.sql          # Cortex Search Service
 │
 ├── semantic_models/
 │   └── factory_health_ontology.yaml  # CoCo Semantic Model: assets, batches, RUL measures
@@ -227,12 +219,8 @@ SKU-Specific-OEE-Degradation-Tracker/
 ├── skills/
 │   └── IT_OT_TimeSeries_Joiner.yaml  # Reusable CoCo Skill for the IT/OT BETWEEN join
 │
-├── docs/
-│   └── coco_lifecycle_evidence.md    # CoCo CLI lifecycle evidence (Planning → Validation)
-│
 ├── tests/
-│   └── test_coco_skills.py           # pytest suite: SQL rendering, Pydantic guardrails,
-│                                     #   MockDataProvider decoupling, referential integrity
+│   └── test_oee_tracker.py           # pytest suite: SQL rendering, Pydantic guardrails, MockDataProvider decoupling, referential integrity
 │
 └── code/
     ├── misc/
@@ -245,13 +233,11 @@ SKU-Specific-OEE-Degradation-Tracker/
     ├── llm_setup/
     │   └── llm.py                    # Ollama LLM client (mistral, local fallback)
     ├── mcp/
-    │   ├── mcp.json                  # MCP Server configuration
     │   └── start-mcp-inspector.ps1   # PowerShell script to start MCP Inspector
     ├── semantic_model_code/
     │   └── semantic_model_deployment.py  # Deploys semantic model to Snowflake
     ├── execute_detection/
-    │   ├── data_provider.py          # DataProvider abstraction: SnowflakeDataProvider /
-    │   │                             #   MockDataProvider (no Snowflake required for testing)
+    │   ├── data_provider.py          # DataProvider abstraction: SnowflakeDataProvider / MockDataProvider (no Snowflake required for testing)
     │   ├── prediction.py             # Diagnostic Agent: RUL calculation + threshold breach
     │   ├── investigative_agent.py    # Investigative/Execution Agent: SKU ID + OEM + Slack
     │   ├── future_prediction.py      # Enriches execution payload with forward prediction
@@ -340,15 +326,13 @@ SLACK_CHANNEL=#oee-production-alerts
 
 After credentials are configured, the app's **🏗️ Infrastructure Setup** tab (in `app.py`) can deploy all SQL objects in one click. Alternatively, run the scripts manually in order:
 
-```
-01-init.sql  →  02-copy.sql  →  03-join.sql  →  04-rul.sql  →
-04-oem.sql   →  05-parse.sql →  06-cortex.sql →  07-retrieval.sql  →
-08-alerts.sql → 09-semantic-models.sql
+```text
+01-infrastructure.sql → 02-data-ingestion.sql → 03-analytics.sql → 04-cortex-search.sql
 ```
 
-> **Important:** Run `code/misc/data_generator.py` and `02-copy.sql` **before** `04-rul.sql`. The ML Forecast model requires several hundred rows spanning multiple hours in `IT_OT_CONVERGED`.
+> **Important:** Run `code/misc/data_generator.py` and `02-data-ingestion.sql` **before** `03-analytics.sql`. The ML Forecast model requires several hundred rows spanning multiple hours in `IT_OT_CONVERGED`.
 
-> **Important:** Run `code/create_rag/insert_document.py` **before** `06-cortex.sql` to ingest the OEM PDF into Snowflake for Cortex Search indexing.
+> **Important:** Run `code/create_rag/insert_document.py` **before** `04-cortex-search.sql` to ingest the OEM PDF into Snowflake for Cortex Search indexing.
 
 ---
 
@@ -385,10 +369,10 @@ Both `prediction.py` and `investigative_agent.py` accept a `data_provider` argum
 
 ## 13. Testing
 
-The test suite in `tests/test_coco_skills.py` runs with `pytest` and requires **no Snowflake credentials**.
+The test suite in `tests/test_oee_tracker.py` runs with `pytest` and requires **no Snowflake credentials**.
 
 ```bash
-pytest tests/test_coco_skills.py -v
+pytest tests/test_oee_tracker.py -v
 ```
 
 | Test | What It Validates |
@@ -397,17 +381,13 @@ pytest tests/test_coco_skills.py -v
 | `test_pydantic_schemas` | `MitigationDecision` rejects hallucinated fields (`extra="forbid"`); `DiagnosticState` enforces confidence score range |
 | `test_mock_data_provider_and_decoupling` | `MockDataProvider` returns correct telemetry shape, active batch, and OEM data without Snowflake |
 | `test_data_generator_referential_integrity` | IT batch windows align with OT timestamps via `merge_asof` boundary check |
+| `test_deterministic_rule_evaluation_dynamic_caps` | Validates fallback deterministic rules with dynamic hardware constraints |
+| `test_validate_oem_evidence_dynamic_fallback` | Validates fallback logic if Cortex retrieval returns no evidence |
 
 **Expected output:**
 ```
-4 passed in ~4s
+6 passed in ~4s
 ```
-
----
-
-## 14. CoCo Lifecycle Evidence
-
-Full CoCo CLI session logs, phase-by-phase development commands, and validation outputs are documented in [`docs/coco_lifecycle_evidence.md`](docs/coco_lifecycle_evidence.md).
 
 ---
 

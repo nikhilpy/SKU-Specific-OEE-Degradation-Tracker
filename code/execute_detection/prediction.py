@@ -47,13 +47,26 @@ def to_float(value):
     return float(match.group())
 
 
-def get_threshold(retrieved):
+def get_threshold(retrieved, data_provider=None):
     """
-    Extract the OEM operating limits from retrieved manual text.
+    Extract the OEM operating limits. Dynamically fetches from Snowflake first.
+    Falls back to LLM parsing of the retrieved manual text, and finally to DEFAULT_THRESHOLDS.
+    """
+    if data_provider and hasattr(data_provider, '_get_df'):
+        try:
+            df = data_provider._get_df(
+                "SELECT MAX_TEMP_LIMIT, MAX_VIBRATION_LIMIT FROM OEM_EQUIPMENT_THRESHOLDS LIMIT 1"
+            )
+            if not df.empty and not pd.isna(df.iloc[0]['MAX_TEMP_LIMIT']):
+                print("[Prediction Agent] Successfully fetched dynamic thresholds from OEM_EQUIPMENT_THRESHOLDS")
+                return {
+                    "temperature_limit": float(df.iloc[0]['MAX_TEMP_LIMIT']),
+                    "vibration_limit": float(df.iloc[0]['MAX_VIBRATION_LIMIT']),
+                    "failure_threshold_hours": 24.0
+                }
+        except Exception as e:
+            print(f"[Prediction Agent] Failed to fetch dynamic thresholds: {e}")
 
-    Falls back to DEFAULT_THRESHOLDS when nothing was retrieved or
-    the model returns values that cannot be parsed.
-    """
     if not retrieved:
         return dict(DEFAULT_THRESHOLDS)
 
@@ -115,7 +128,7 @@ def predict(equipment_id="LINE-2-PACKAGING", data_provider=None):
 
     retrieved = data_provider.search_oem_manual(query)
 
-    thresholds = get_threshold(retrieved)
+    thresholds = get_threshold(retrieved, data_provider)
 
     TEMPERATURE_LIMIT = thresholds["temperature_limit"]
     VIBRATION_LIMIT = thresholds["vibration_limit"]

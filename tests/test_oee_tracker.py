@@ -113,11 +113,11 @@ def test_data_generator_referential_integrity():
     # Call data generator which writes to CSVs in current directory
     generate_factory_data()
     
-    assert os.path.exists("it_batch_schedule.csv")
-    assert os.path.exists("ot_telemetry_stream.csv")
+    assert os.path.exists(os.path.join(_CODE_ROOT, "it_batch_schedule.parquet"))
+    assert os.path.exists(os.path.join(_CODE_ROOT, "ot_telemetry_stream.parquet"))
     
-    it_df = pd.read_csv("it_batch_schedule.csv")
-    ot_df = pd.read_csv("ot_telemetry_stream.csv")
+    it_df = pd.read_parquet(os.path.join(_CODE_ROOT, "it_batch_schedule.parquet"))
+    ot_df = pd.read_parquet(os.path.join(_CODE_ROOT, "ot_telemetry_stream.parquet"))
     
     # Convert timestamps
     it_df["START_TIME"] = pd.to_datetime(it_df["START_TIME"])
@@ -140,8 +140,72 @@ def test_data_generator_referential_integrity():
     
     # Cleanup
     try:
-        os.remove("it_batch_schedule.csv")
-        os.remove("ot_telemetry_stream.csv")
+        os.remove(os.path.join(_CODE_ROOT, "it_batch_schedule.parquet"))
+        os.remove(os.path.join(_CODE_ROOT, "ot_telemetry_stream.parquet"))
     except Exception:
         pass
+
+def test_deterministic_rule_evaluation_dynamic_caps():
+    """Test that the deterministic rule evaluation respects dynamic hard caps."""
+    from investigative_agent import deterministic_rule_evaluation
+    
+    # Test breach of dynamic temp cap
+    decision = deterministic_rule_evaluation(
+        equipment_id="LINE-1",
+        sku="SKU-1",
+        rul_hours=30.0,  # normally MONITOR
+        current_temp=95.0, # breaches 90.0
+        current_vibration=1.0,
+        dynamic_temp_cap=90.0,
+        dynamic_vib_cap=2.3
+    )
+    assert decision.priority == "CRITICAL"
+    assert decision.action == "IMMEDIATE_MAINTENANCE"
+    
+    # Test safe within dynamic caps
+    decision2 = deterministic_rule_evaluation(
+        equipment_id="LINE-1",
+        sku="SKU-1",
+        rul_hours=30.0,
+        current_temp=85.0,
+        current_vibration=1.0,
+        dynamic_temp_cap=90.0,
+        dynamic_vib_cap=2.3
+    )
+    assert decision2.priority == "MEDIUM"
+    assert decision2.action == "MONITOR_EQUIPMENT"
+    
+    # Test dynamic cap adjustment (if cap is raised, 95 is no longer a breach)
+    decision3 = deterministic_rule_evaluation(
+        equipment_id="LINE-1",
+        sku="SKU-1",
+        rul_hours=30.0,
+        current_temp=95.0,
+        current_vibration=1.0,
+        dynamic_temp_cap=100.0, # Cap raised!
+        dynamic_vib_cap=2.3
+    )
+    assert decision3.priority == "MEDIUM"
+    assert decision3.action == "MONITOR_EQUIPMENT"
+
+def test_validate_oem_evidence_dynamic_fallback():
+    """Test that missing chunks fallback gracefully and don't crash."""
+    from investigative_agent import validate_oem_evidence
+    
+    # Ensure attributes exist (usually monkey-patched in investigate())
+    validate_oem_evidence.dynamic_temp_cap = 92.0
+    validate_oem_evidence.dynamic_vib_cap = 2.5
+    
+    # Test missing chunks
+    validation, status = validate_oem_evidence(
+        oem_evidence={"chunks": []},
+        current_temp=80.0,
+        current_vibration=1.0
+    )
+    
+    assert status == "DEGRADED_LOCAL_HEURISTIC"
+    assert validation.breach_detected is False
+    assert validation.max_temp_limit == 92.0
+    assert validation.max_vibration_limit == 2.5
+
 

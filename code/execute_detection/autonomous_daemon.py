@@ -115,7 +115,8 @@ def poll_and_execute():
                 logger.error(f"Failed to record alert in ALERTS_HISTORY for {equipment_id}: {e}")
                 
     finally:
-        conn.close()
+        if 'cursor' in locals():
+            cursor.close()
 
 def main():
     parser = argparse.ArgumentParser(description="Autonomous polling daemon for OEE Degradation")

@@ -111,10 +111,11 @@ def render_setup_wizard():
     st.progress(0.25)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2, gap="large")
+    with st.form("setup_wizard_form"):
+        col1, col2 = st.columns(2, gap="large")
 
-    with col1:
-        st.markdown("### ❄️ Snowflake Credentials")
+        with col1:
+            st.markdown("### ❄️ Snowflake Credentials")
         st.caption("Provide connection details to your Snowflake instance.")
 
         sf_account = st.text_input(
@@ -196,11 +197,11 @@ def render_setup_wizard():
             """
         )
 
-    st.markdown("---")
+        st.markdown("---")
 
-    btn_col1, btn_col2 = st.columns([1, 2])
-    with btn_col1:
-        test_and_save = st.button("🔌 Test Connection & Save", type="primary", use_container_width=True)
+        btn_col1, btn_col2 = st.columns([1, 2])
+        with btn_col1:
+            test_and_save = st.form_submit_button("🔌 Test Connection & Save", type="primary", use_container_width=True)
 
     if test_and_save:
         # Validate inputs
@@ -320,8 +321,8 @@ def deploy_snowflake_infrastructure(conn):
             log(f"✅ Completed {filename}")
 
         try:
-            # Step 1: Init Database
-            run_sql("01-init.sql")
+            # Step 1: Init Database & Infrastructure
+            run_sql("01-infrastructure.sql")
             
             # Step 2: Generate and load data
             log("Generating synthetic data...")
@@ -330,7 +331,7 @@ def deploy_snowflake_infrastructure(conn):
             if misc_dir not in sys.path:
                 sys.path.append(misc_dir)
             import data_generator
-            it_csv, ot_csv = data_generator.generate_factory_data()
+            it_file, ot_file = data_generator.generate_factory_data()
             
             log("Uploading synthetic data to stage...")
             def _put_path(abs_path):
@@ -342,15 +343,25 @@ def deploy_snowflake_infrastructure(conn):
             cursor.execute(f"USE DATABASE {db_name}")
             cursor.execute(f"USE SCHEMA {schema_name}")
             
-            cursor.execute(f"PUT 'file://{_put_path(it_csv)}' @FACTORY_DATA_STAGE AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
-            cursor.execute(f"PUT 'file://{_put_path(ot_csv)}' @FACTORY_DATA_STAGE AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
+            cursor.execute(f"PUT 'file://{_put_path(it_file)}' @FACTORY_DATA_STAGE AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
+            cursor.execute(f"PUT 'file://{_put_path(ot_file)}' @FACTORY_DATA_STAGE AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
             cursor.close()
+            
+            log("Cleaning up local data files...")
+            try:
+                if os.path.exists(it_file):
+                    os.remove(it_file)
+                if os.path.exists(ot_file):
+                    os.remove(ot_file)
+                log("✅ Local data files deleted.")
+            except Exception as e:
+                log(f"⚠️ Could not delete local data files: {e}")
+
             log("✅ Data uploaded successfully.")
             
-            run_sql("02-copy.sql")
+            run_sql("02-data-ingestion.sql")
             
-            # Step 3: Converged Table
-            run_sql("03-join.sql")
+            # Step 3: Converged Table Refresh
             log("Refreshing dynamic table IT_OT_CONVERGED...")
             cursor = conn.cursor()
             cursor.execute("ALTER DYNAMIC TABLE IT_OT_CONVERGED REFRESH")
@@ -358,19 +369,11 @@ def deploy_snowflake_infrastructure(conn):
             log("✅ Dynamic table refreshed.")
             
             # Step 4: ML Forecast
-            run_sql("04-rul.sql")
-            
-            # Step 5: OEM Table & Parse
-            try:
-                run_sql("04-oem.sql")
-                run_sql("05-parse.sql")
-            except Exception as e:
-                print(f"Error in 04-oem/05-parse (Feature check): {e}")
-                log("⚠️ Bypassed error in 04-oem/05-parse (Feature check). Check backend logs for details.")
+            run_sql("03-analytics.sql")
             
             # Step 6: Upload PDF Document
             log("Uploading OEM PDF Manual...")
-            pdf_file = os.path.join(PROJECT_ROOT, "data", "LINE-2-PACKAGING OEM Maintenance Manual.pdf")
+            pdf_file = os.path.join(PROJECT_ROOT, "data", "OEM_Maintenance_and_Operations_Manual.pdf")
             if os.path.exists(pdf_file):
                 file_path = _put_path(os.path.abspath(pdf_file))
                 cursor = conn.cursor()
@@ -389,19 +392,14 @@ def deploy_snowflake_infrastructure(conn):
             else:
                 log("⚠️ PDF manual not found in data/ directory. Skipping...")
             
-            # Step 7: Cortex Search & Retrieval
+            # Step 6: Cortex Search & Retrieval
             try:
-                run_sql("06-cortex.sql")
-                run_sql("07-retrieval.sql")
+                run_sql("04-cortex-search.sql")
             except Exception as e:
                 print(f"Error in Cortex Search setup: {e}")
                 log("⚠️ Bypassed Cortex Search setup (trial account restriction). Check backend logs for details.")
             
-            # Step 8: Alerts History
-            run_sql("08-alerts.sql")
-            
-            # Step 9: Semantic Models
-            run_sql("09-semantic-models.sql")
+            # Step 7: Semantic Models
             log("Deploying Semantic Model (factory_health_ontology.yaml)...")
             yaml_path = os.path.join(PROJECT_ROOT, "semantic_models", "factory_health_ontology.yaml")
             if os.path.exists(yaml_path):
