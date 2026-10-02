@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "pre-tool-use": [
+      {
+        "matcher": "Tool == 'bash' && Command matches '(DROP|TRUNCATE|DELETE FROM).*(?i)(RAW_OT_TELEMETRY|RAW_IT_BATCHES|IT_OT_CONVERGED|ALERTS_HISTORY|OEM_MANUAL_CHUNKS|OEM_EQUIPMENT_THRESHOLDS)'",
+        "action": "block",
+        "message": "Blocked: destructive SQL on production tables. Use a staging/test schema or confirm with the user first."
+      }
+    ],
+    "post-tool-use": []
+  }
+}

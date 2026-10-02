@@ -1,0 +1,17 @@
+{
+  "project": {
+    "name": "SKU-Specific OEE Degradation Tracker",
+    "description": "IT/OT convergence for predictive maintenance — identifies which SKUs degrade equipment health and autonomously mitigates via Slack MCP."
+  },
+  "snowflake": {
+    "database": "OEE_COMMAND_CENTER",
+    "schema": "FACTORY_FLOOR",
+    "warehouse": "COMPUTE_WH",
+    "role": "ACCOUNTADMIN"
+  },
+  "context": {
+    "agentsFile": "AGENTS.md",
+    "semanticModels": ["semantic_models/factory_health_ontology.yaml"],
+    "skills": ["skills/IT_OT_TimeSeries_Joiner.yaml"]
+  }
+}

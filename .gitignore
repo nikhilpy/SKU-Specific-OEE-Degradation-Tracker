@@ -223,4 +223,7 @@ mcp.json
 # CoCo MCP config (contains credentials injected from .env)
 .agents/mcp_config.json
 
-.node_modules/
+node_modules/
+
+# CoCo plans (auto-generated, session-specific)
+.cortex/plans/

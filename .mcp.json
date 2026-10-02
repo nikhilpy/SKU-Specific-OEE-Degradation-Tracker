@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "slack": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-slack"
+      ],
+      "env": {
+        "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}",
+        "SLACK_TEAM_ID": "${SLACK_TEAM_ID}"
+      },
+      "description": "Slack MCP server for posting mitigation alerts to #oee-production-alerts channel via JSON-RPC over stdio."
+    }
+  }
+}
