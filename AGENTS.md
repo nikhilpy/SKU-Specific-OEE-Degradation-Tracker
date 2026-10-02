@@ -43,14 +43,25 @@ Autonomous daemon: `autonomous_daemon.py` polls `ASSET_RUL_PREDICTIONS` every 60
 ```
 sql/                          SQL scripts (01-infrastructure → 04-cortex-search)
 semantic_models/              Cortex Analyst semantic model YAML
-skills/                       Reusable CoCo skill YAMLs
+.cortex/skills/               Reusable CoCo skill SKILL.md files (auto-discovered)
 code/misc/                    Data generator + Snowflake client
 code/create_rag/              PDF chunking + RAG pipeline
 code/llm_setup/               Ollama LLM client
+code/semantic_model_code/     Semantic model deployment to Snowflake
 code/execute_detection/       Multi-agent detection pipeline
 code/streamlit_app/           4-page Streamlit Command Center
 tests/                        pytest suite (offline, no Snowflake needed)
 ```
+
+> **Removed:** `code/mcp/` directory (was a local debugging tool with `start-mcp-inspector.ps1` and generated `mcp.json` with real credentials). CoCo CLI uses native `.mcp.json` discovery instead.
+
+## CoCo CLI Configuration
+
+- `.cortex/settings.json` — Project-level settings (Snowflake context, semantic models)
+- `.cortex/hooks.json` — Security hooks blocking destructive SQL on production tables
+- `.cortex/skills/` — Auto-discovered CoCo skills (it-ot-timeseries-joiner, oem-threshold-extractor, rul-prediction)
+- `.cortex/commands/` — Custom slash commands (deploy-infrastructure, generate-data, run-detection)
+- `.mcp.json` — MCP server configuration (Slack, Memory, Filesystem for autonomous alerts and state)
 
 ## Pydantic Schema Contracts
 

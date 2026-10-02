@@ -217,12 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# MCP config (may contain secrets in env section)
-mcp.json
-
-# CoCo MCP config (contains credentials injected from .env)
-.agents/mcp_config.json
-
 node_modules/
 
 # CoCo plans (auto-generated, session-specific)

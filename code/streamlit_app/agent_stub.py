@@ -63,7 +63,7 @@ def _build_query(equipment_id: str, intent: str = "investigation") -> str:
 
 _FALLBACK_OEM_TEXT = (
     "Max Sustained Temp: 85°C, Max Vibration: 7.5 mm/s "
-    "(fallback — OEM_MANUAL_CHUNKS not yet deployed; run sql/06-cortex.sql)"
+    "(fallback — OEM_MANUAL_CHUNKS not yet deployed; run sql/04-cortex-search.sql)"
 )
 
 

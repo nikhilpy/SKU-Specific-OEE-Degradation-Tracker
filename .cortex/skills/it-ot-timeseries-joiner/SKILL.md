@@ -43,10 +43,6 @@ LEFT JOIN RAW_IT_BATCHES it
     AND ot.TIMESTAMP BETWEEN it.START_TIME AND it.END_TIME;
 ```
 
-## Reusable Skill YAML
-
-The parameterized version is published at `skills/IT_OT_TimeSeries_Joiner.yaml`.
-
 ## Key Considerations
 
 - Use `LEFT JOIN` so OT readings during idle/changeover periods are preserved (no batch match).

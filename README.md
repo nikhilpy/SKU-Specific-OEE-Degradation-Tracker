@@ -33,8 +33,8 @@ The SKU-Specific OEE Degradation Tracker is a Snowflake CoCo-native prototype th
 | **Command Center & Action** | 4-page Streamlit app: Dashboard, Investigative Agent chat, Alerts History, Data Analyst (Cortex Analyst) |
 | **Synthetic Data** | `code/misc/data_generator.py` — referentially consistent IT/OT data with a hard-coded 15% temp / 20% vibration spike exclusive to SKU-899 |
 | **Semantic Model & Ontology** | `semantic_models/factory_health_ontology.yaml` — CoCo semantic view linking assets, batches, `PREDICTED_RUL_HOURS`, `CUMULATIVE_STRESS_SCORE` |
-| **Unstructured Processing** | `data/OEM_Maintenance_and_Operations_Manual.pdf` chunked and vectorized by Cortex Search (`sql/06-cortex.sql`) |
-| **Reusable Skill** | `skills/IT_OT_TimeSeries_Joiner.yaml` — published CoCo Skill for the time-series boundary join |
+| **Unstructured Processing** | `data/OEM_Maintenance_and_Operations_Manual.pdf` chunked and vectorized by Cortex Search (`sql/04-cortex-search.sql`) |
+| **Reusable Skill** | `.cortex/skills/it-ot-timeseries-joiner/SKILL.md` — CoCo CLI skill documenting the IT/OT time-series boundary join |
 | **Slack MCP Integration** | `@modelcontextprotocol/server-slack` spawned as a stdio subprocess; replaces legacy HTTP API calls |
 | **Autonomous Operations** | `code/execute_detection/autonomous_daemon.py` — continuous background monitor |
 | **Multi-Agent Orchestration** | Diagnostic Agent → Investigative Agent → Execution Agent pipeline with Pydantic-validated JSON handoffs |
@@ -199,6 +199,7 @@ erDiagram
 ```text
 SKU-Specific-OEE-Degradation-Tracker/
 ├── .env                              # Snowflake + Slack credentials (not committed)
+├── .mcp.json                          # MCP server configuration (Slack, Memory, Filesystem)
 ├── requirements.txt                  # Python dependencies
 ├── bootstrap.py                      # Zero-click setup: venv, pip, npm, ollama
 ├── start.bat                         # Windows launcher → runs bootstrap.py
@@ -208,16 +209,30 @@ SKU-Specific-OEE-Degradation-Tracker/
 │   └── OEM_Maintenance_and_Operations_Manual.pdf  # Source OEM manual for Cortex Search
 │
 ├── sql/
-│   ├── 01-infrastructure.sql         # Database, schema, warehouse setup
+│   ├── 01-infrastructure.sql         # Database, schema, warehouse setup + Dynamic Table IT_OT_CONVERGED
 │   ├── 02-data-ingestion.sql         # COPY INTO staging for CSV files
-│   ├── 03-analytics.sql              # Dynamic Table IT_OT_CONVERGED (BETWEEN join)
-│   └── 04-cortex-search.sql          # Cortex Search Service
+│   ├── 03-analytics.sql              # ML Forecast models + ASSET_RUL_PREDICTIONS view
+│   └── 04-cortex-search.sql          # Cortex Search Service (OEM_MANUAL_SEARCH)
 │
 ├── semantic_models/
 │   └── factory_health_ontology.yaml  # CoCo Semantic Model: assets, batches, RUL measures
 │
-├── skills/
-│   └── IT_OT_TimeSeries_Joiner.yaml  # Reusable CoCo Skill for the IT/OT BETWEEN join
+├── .cortex/                          # CoCo CLI project configuration
+│   ├── settings.json                 # Project-level settings (Snowflake context, semantic models)
+│   ├── hooks.json                    # Security hooks blocking destructive SQL on production tables
+│   ├── skills/
+│   │   ├── it-ot-timeseries-joiner/  # Reusable skill: IT/OT boundary join pattern
+│   │   │   └── SKILL.md
+│   │   ├── oem-threshold-extractor/  # Reusable skill: OEM threshold retrieval
+│   │   │   └── SKILL.md
+│   │   └── rul-prediction/           # Reusable skill: RUL prediction pipeline
+│   │       └── SKILL.md
+│   ├── commands/                     # Custom slash commands
+│   │   ├── deploy-infrastructure.md
+│   │   ├── generate-data.md
+│   │   └── run-detection.md
+│   └── plans/
+│       └── plan_2026-10-02_1102.md   # Development plan
 │
 ├── tests/
 │   └── test_oee_tracker.py           # pytest suite: SQL rendering, Pydantic guardrails, MockDataProvider decoupling, referential integrity
@@ -232,8 +247,6 @@ SKU-Specific-OEE-Degradation-Tracker/
     │   └── create_rag_workflow.py    # RAG pipeline orchestrator
     ├── llm_setup/
     │   └── llm.py                    # Ollama LLM client (mistral, local fallback)
-    ├── mcp/
-    │   └── start-mcp-inspector.ps1   # PowerShell script to start MCP Inspector
     ├── semantic_model_code/
     │   └── semantic_model_deployment.py  # Deploys semantic model to Snowflake
     ├── execute_detection/
@@ -315,6 +328,7 @@ SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 
 # Slack
 SLACK_BOT_TOKEN=xoxb-...
+SLACK_TEAM_ID=T0...
 SLACK_CHANNEL=#oee-production-alerts
 ```
 
@@ -377,7 +391,7 @@ pytest tests/test_oee_tracker.py -v
 
 | Test | What It Validates |
 |---|---|
-| `test_sql_skill_rendering` | `IT_OT_TimeSeries_Joiner.yaml` parameters exist and SQL renders correctly with substitutions |
+| `test_sql_skill_rendering` | IT/OT time-series boundary join SQL renders correctly with parameter substitutions |
 | `test_pydantic_schemas` | `MitigationDecision` rejects hallucinated fields (`extra="forbid"`); `DiagnosticState` enforces confidence score range |
 | `test_mock_data_provider_and_decoupling` | `MockDataProvider` returns correct telemetry shape, active batch, and OEM data without Snowflake |
 | `test_data_generator_referential_integrity` | IT batch windows align with OT timestamps via `merge_asof` boundary check |
@@ -391,7 +405,7 @@ pytest tests/test_oee_tracker.py -v
 
 ---
 
-## 15. Real-World Scenario
+## 14. Real-World Scenario
 
 A high-volume packaging facility runs continuous operations. At 10:00 AM, the Command Center flashes:
 

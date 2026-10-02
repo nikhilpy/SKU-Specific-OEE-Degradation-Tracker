@@ -1,10 +1,7 @@
 import asyncio
 import concurrent.futures
-import json
 import os
 import sys
-import urllib.error
-import urllib.request
 
 from dotenv import load_dotenv
 from pydantic import ValidationError
@@ -20,7 +17,6 @@ for path in (_CURRENT_DIR, os.path.join(_CODE_ROOT, "misc"), os.path.join(_CODE_
 from schemas import DiagnosticState, OEMValidation, MitigationDecision
 from data_provider import SnowflakeDataProvider
 from snowflake_client import FALLBACK_OEM_EVIDENCE
-from llm import OLLAMA_HOST, DEFAULT_MODEL  # noqa: E402
 
 # Load .env from project root
 _ENV_PATH = os.path.join(
@@ -49,33 +45,6 @@ EXECUTION_AGENT_SYSTEM_PROMPT = (
     "*Justification/Cause*: <cause>\n"
     "*OEM Constraints*: <constraints>"
 )
-
-# Tool definition exposed to Ollama for autonomous tool-calling
-_SLACK_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "slack_post_message",
-        "description": "Posts a mitigation alert message to a Slack channel.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "channel_id": {
-                    "type": "string",
-                    "description": (
-                        "Slack channel to post to "
-                        "(e.g. #oee-production-alerts)"
-                    ),
-                },
-                "text": {
-                    "type": "string",
-                    "description": "The alert message text.",
-                },
-            },
-            "required": ["channel_id", "text"],
-        },
-    },
-}
-
 
 # ── Helpers & Telemetry ───────────────────────────────────────────────────────
 
@@ -355,8 +324,8 @@ def _run_mcp_tool(channel_id: str, text: str) -> str:
 def _run_execution_agent(context: dict) -> dict:
     """
     Autonomous CoCo Execution Agent.
-    Executes slack_post_message by connecting to @modelcontextprotocol/server-slack
-    over stdio via the Python MCP SDK.
+    Composes a structured mitigation alert and sends it to Slack via
+    the Slack MCP server over stdio.
     """
     equipment_id = context["equipment_id"]
     rul_hours    = context["rul_hours"]
@@ -369,72 +338,34 @@ def _run_execution_agent(context: dict) -> dict:
     oem_text     = _oem_to_text(context.get("oem_evidence"))
     channel      = os.getenv("SLACK_CHANNEL", "#oee-production-alerts")
 
-    user_message = (
-        f"A failure has been detected on the factory floor. "
-        f"Here is the investigation context:\n"
-        f"- Equipment ID: {equipment_id}\n"
-        f"- Active SKU: {sku}\n"
-        f"- Predicted Remaining Useful Life (RUL): {rul_hours:.2f} hours\n"
-        f"- Priority: {priority}\n"
-        f"- Recommended Action: {action}\n"
-        f"- Current Telemetry: Temp={current_temp} C, Vibration={current_vib} mm/s\n"
-        f"- Justification/Cause: {justification}\n"
-        f"- OEM Constraints: {oem_text}\n\n"
-        f"Send a highly detailed mitigation alert to {channel} now. "
-        f"Make sure the message contains all the detailed information above, formatted clearly."
+    alert_text = (
+        "🚨 *Mitigation Alert: Equipment Failure Detected*\n\n"
+        f"*Equipment ID*: {equipment_id}\n"
+        f"*Active SKU*: {sku}\n"
+        f"*Predicted RUL*: {rul_hours:.2f} hours\n"
+        f"*Priority*: {priority}\n"
+        f"*Recommended Action*: {action}\n"
+        f"*Current Telemetry*: Temp={current_temp} C, Vibration={current_vib} mm/s\n"
+        f"*Justification/Cause*: {justification}\n"
+        f"*OEM Constraints*: {oem_text}\n"
+        f"*ACTION REQUIRED*: Initiate {action.replace('_', ' ').title()} immediately."
     )
 
     print("\n===== EXECUTION AGENT (MCP Mode) =====")
     print(f"[Agent] System prompt active: Execution Agent")
     print(f"[Agent] Context: {equipment_id} | RUL={rul_hours:.2f}h | {priority}")
-
-    tool_args: dict | None = None
-    try:
-        from llm import chat_with_tools
-        messages = [
-            {"role": "system", "content": EXECUTION_AGENT_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
-        ]
-        
-        tool_calls = chat_with_tools(messages, [_SLACK_TOOL_SCHEMA])
-        if tool_calls:
-            fn        = tool_calls[0].get("function", {})
-            raw_args  = fn.get("arguments", {})
-            if isinstance(raw_args, str):
-                tool_args = json.loads(raw_args)
-            elif isinstance(raw_args, dict):
-                tool_args = raw_args
-            print(f"[Agent] LLM issued tool call → slack_post_message")
-            print(f"[Agent] Channel: {tool_args.get('channel_id')} | Message composed ✓")
-
-    except Exception as exc:
-        print(f"[Agent] LLM tool-calling unavailable ({exc}). Composing alert directly.")
-
-    if not tool_args:
-        fallback_text = (
-            f"🚨 *URGENT* — OEE Degradation Alert\n"
-            f"*Equipment ID*: {equipment_id}\n"
-            f"*Active SKU*: {sku}\n"
-            f"*Predicted RUL*: {rul_hours:.2f} hours\n"
-            f"*Priority*: {priority}  |  *Action*: {action}\n"
-            f"*Telemetry*: Temp={current_temp} C, Vibration={current_vib} mm/s\n"
-            f"*Justification*: {justification}\n"
-            f"*OEM Constraints*: {oem_text}\n"
-            f"*ACTION REQUIRED*: Initiate "
-            f"{action.replace('_', ' ').title()} immediately."
-        )
-        tool_args = {"channel_id": channel, "text": fallback_text}
+    print(f"[Agent] Dispatching Slack alert to {channel}")
 
     try:
         print(f"[Agent] Calling slack_post_message via MCP stdio transport...")
         mcp_result = _run_mcp_tool(
-            channel_id=tool_args.get("channel_id", channel),
-            text=tool_args["text"],
+            channel_id=channel,
+            text=alert_text,
         )
         print(f"[Agent] ✅ Slack alert delivered. MCP result: {mcp_result}")
         return {
             "status":       "ALERT_SENT",
-            "channel":      tool_args.get("channel_id", channel),
+            "channel":      channel,
             "equipment_id": equipment_id,
             "rul_hours":    rul_hours,
             "priority":     priority,

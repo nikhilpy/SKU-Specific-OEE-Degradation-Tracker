@@ -11,7 +11,6 @@
   },
   "context": {
     "agentsFile": "AGENTS.md",
-    "semanticModels": ["semantic_models/factory_health_ontology.yaml"],
-    "skills": ["skills/IT_OT_TimeSeries_Joiner.yaml"]
+    "semanticModels": ["semantic_models/factory_health_ontology.yaml"]
   }
 }
